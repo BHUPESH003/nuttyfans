@@ -1,0 +1,107 @@
+@import url("./variables.css");
+/* NOTO SANS */
+@font-face {
+    font-family: "Noto Sans";
+    src: url("../fonts/NotoSans-Regular.ttf") format("truetype");
+    font-weight: 400;
+    font-style: normal;
+}
+@font-face {
+    font-family: "Noto Sans";
+    src: url("../fonts/NotoSans-Bold.ttf") format("truetype");
+    font-weight: 700;
+    font-style: normal;
+}
+
+/* METLIFE CIRCULAR */
+@font-face {
+    font-family: "Metlife Circular";
+    src: url(../fonts/MetLifeCircular-Light.otf) format("opentype");
+    font-weight: 300;
+    font-style: normal;
+}
+@font-face {
+    font-family: "Metlife Circular";
+    src: url(../fonts/MetLifeCircular-LightItalic.otf) format("opentype");
+    font-weight: 300;
+    font-style: italic;
+}
+@font-face {
+    font-family: "Metlife Circular";
+    src: url(../fonts/MetLifeCircular-Normal.otf) format("opentype");
+    font-weight: 400;
+    font-style: normal;
+}
+@font-face {
+    font-family: "Metlife Circular";
+    src: url(../fonts/MetLifeCircular-NormalItalic.otf) format("opentype");
+    font-weight: 400;
+    font-style: italic;
+}
+@font-face {
+    font-family: "Metlife Circular";
+    src: url(../fonts/MetLifeCircular-Medium.otf) format("opentype");
+    font-weight: 500;
+    font-style: normal;
+}
+@font-face {
+    font-family: "Metlife Circular";
+    src: url(../fonts/MetLifeCircular-MediumItalic.otf) format("opentype");
+    font-weight: 500;
+    font-style: italic;
+}
+@font-face {
+    font-family: "Metlife Circular";
+    src: url(../fonts/MetLifeCircular-Bold.otf) format("opentype");
+    font-weight: 700;
+    font-style: normal;
+}
+@font-face {
+    font-family: "Metlife Circular";
+    src: url(../fonts/MetLifeCircular-BoldItalic.otf) format("opentype");
+    font-weight: 700;
+    font-style: italic;
+}
+
+/* Utopia */
+@font-face {
+    font-family: "Utopia";
+    src: url(../fonts/Utopia-Regular.otf) format("truetype");
+    font-weight: 400;
+    font-style: normal;
+}
+@font-face {
+    font-family: "Utopia";
+    src: url(../fonts/Utopia-Semibold.otf) format("truetype");
+    font-weight: 600;
+    font-style: normal;
+}
+@font-face {
+    font-family: "Utopia";
+    src: url(../fonts/Utopia-BoldOsF.otf) format("truetype");
+    font-weight: 700;
+    font-style: normal;
+}
+@font-face {
+    font-family: "Utopia";
+    src: url(../fonts/Utopia-Black.otf) format("truetype");
+    font-weight: 900;
+    font-style: normal;
+}
+/* http://meyerweb.com/eric/tools/css/reset/ 
+   v2.0 | 20110126
+   License: none (public domain)
+*/
+
+.swiper {
+    width: 100% !important;
+    max-width: 100% !important;
+}
+
+.swiper-wrapper {
+    width: 100%;
+}
+
+.swiper-slide {
+    width: 100% !important;
+}

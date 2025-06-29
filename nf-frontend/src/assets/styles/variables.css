@@ -1,0 +1,52 @@
+:root {
+  --noto-sans: "Noto Sans";
+  --metlife-circular: "Metlife Circular";
+  --utopia: "Utopia";
+
+  /* FONT WEIGHTS */
+  --fw-regular: 400;
+  --fw-bold: 700;
+
+  /* COLORS */
+  --white: rgba(255, 255, 255, 1);
+  --white-secondary: rgba(242, 242, 242, 1);
+  --gray: rgba(214, 214, 214, 1);
+  --silver-sand: rgba(196, 196, 196, 1);
+  --platinum: rgba(232, 232, 232, 1);
+  --gray-border: rgba(167, 168, 170, 1);
+  --gray-dark3: rgba(117, 120, 123, 1);
+  --gray-dark: rgba(88, 87, 86, 1);
+  --silver: rgba(176, 176, 176, 1);
+  --gray-light: rgba(217, 217, 214, 1);
+  --dark-charcoal: rgba(51, 51, 51, 1);
+  --shadow-color: rgba(0, 0, 0, 0.15);
+  --backdrop-color: rgba(0, 0, 0, 0.25);
+  --heading-color: rgba(29, 29, 27, 1);
+  --black: rgba(0, 0, 0, 1);
+  --raisin-black: rgba(37, 37, 37, 1);
+  --dark-silver: rgba(112, 112, 112, 1);
+  --green: rgba(165, 207, 79, 1);
+  --android-green: rgba(164, 206, 78, 1);
+  --green-light: rgba(164, 206, 78, 0.6);
+  --yellow: rgba(251, 195, 17, 1);
+  --yellow-light: rgba(255, 198, 0, 0.6);
+  --amber: rgba(255, 198, 0, 1);
+  --red: rgba(211, 53, 52, 255);
+  --danger: rgba(165, 29, 57, 1);
+  --spanish-crimson: rgba(222, 27, 84, 1);
+  --raspberry: rgba(219, 10, 91, 1);
+  --pink-light: rgba(255, 165, 166, 1);
+  --blizzard-blue: rgba(186, 221, 245, 1);
+  --blue: rgba(0, 144, 218, 1);
+  --blue1: rgba(0, 156, 220, 1);
+  --ocean-boat-blue: rgba(0, 122, 188, 1);
+  --blue2: rgba(0, 102, 166, 1);
+  --blue-secondary: rgba(0, 97, 160, 1);
+  --black-secondary: rgba(79, 79, 79, 1);
+  --linen: rgba(251, 233, 233, 1);
+  --bubbles-green: rgba(230, 247, 246, 1);
+  --bubbles-blue: rgba(230, 244, 251, 1);
+  --progress-blue: rgba(8, 122, 188, 1);
+  --drop-blue: rgb(215, 239, 250);
+  --dp-blue: rgb(0, 106, 182);
+}
