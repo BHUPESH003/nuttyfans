@@ -131,14 +131,14 @@ export const login = async (req, res, next) => {
     // Check if user exists and password is correct
     if (!user || !(await bcrypt.compare(password, user.password))) {
       const error = new Error("Invalid credentials");
-      error.statusCode = 401;
+      error.statusCode = 400;
       return next(error);
     }
 
     // Check if account is active
     if (!user.isActive) {
       const error = new Error("Your account has been deactivated");
-      error.statusCode = 401;
+      error.statusCode = 400;
       return next(error);
     }
 
