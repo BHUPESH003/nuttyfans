@@ -1,0 +1,353 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              String   @id @default(uuid())
+  email           String   @unique
+  username        String   @unique
+  password        String
+  fullName        String?
+  bio             String?
+  avatarUrl       String?
+  coverUrl        String?
+  role            UserRole @default(USER)
+  isEmailVerified Boolean  @default(false)
+  isActive        Boolean  @default(true)
+
+  // Email verification
+  emailVerificationToken   String?
+  emailVerificationExpires DateTime?
+
+  // Password reset
+  passwordResetToken   String?
+  passwordResetExpires DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  profile          CreatorProfile?
+  subscriptions    Subscription[]  @relation("subscriber")
+  subscribers      Subscription[]  @relation("creator")
+  posts            Post[]
+  comments         Comment[]
+  likes            Like[]
+  purchases        Purchase[]
+  sentMessages     Message[]       @relation("sender")
+  receivedMessages Message[]       @relation("receiver")
+  notifications    Notification[]
+  paymentMethods   PaymentMethod[]
+
+  // Square Payment Integration
+  squareCustomerId String?
+
+  // Google OAuth
+  googleId String?
+
+  walletTransactions WalletTransaction[]
+  Media              Media[]
+  bookmarks          Bookmark[]
+
+  @@index([email, username])
+  @@index([emailVerificationToken])
+  @@index([passwordResetToken])
+}
+
+enum UserRole {
+  USER
+  CREATOR
+  ADMIN
+}
+
+model CreatorProfile {
+  id           String @id @default(uuid())
+  userId       String @unique
+  user         User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  monthlyPrice Float
+
+  // Square Payment Integration
+  squareAccountId  String?
+  squareLocationId String?
+
+  categories     Category[]
+  isVerified     Boolean    @default(false)
+  featuredPostId String?
+  socialLinks    Json? // {twitter: "url", instagram: "url", etc.}
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  @@index([userId])
+}
+
+model Category {
+  id              String           @id @default(uuid())
+  name            String           @unique
+  slug            String           @unique
+  creatorProfiles CreatorProfile[]
+  posts           Post[]
+}
+
+model Subscription {
+  id           String    @id @default(uuid())
+  subscriberId String
+  subscriber   User      @relation("subscriber", fields: [subscriberId], references: [id], onDelete: Cascade)
+  creatorId    String
+  creator      User      @relation("creator", fields: [creatorId], references: [id], onDelete: Cascade)
+  status       SubStatus @default(ACTIVE)
+
+  // Square Payment Integration
+  squareSubscriptionId String?
+  squarePaymentId      String?
+
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  cancelAtPeriodEnd  Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([subscriberId, creatorId])
+  @@index([subscriberId, creatorId, status])
+}
+
+enum SubStatus {
+  ACTIVE
+  CANCELED
+  EXPIRED
+  PAST_DUE
+}
+
+model Post {
+  id         String      @id @default(uuid())
+  userId     String
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title      String?
+  content    String?
+  isPremium  Boolean     @default(false)
+  price      Float? // For PPV content
+  mediaUrls  String[] // Array of media URLs
+  mediaType  MediaType[] // Corresponding media types
+  categories Category[]
+  isArchived Boolean     @default(false)
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  // Relations
+  comments  Comment[]
+  likes     Like[]
+  purchases Purchase[] // For PPV content
+  bookmarks Bookmark[]
+  media     Media[]    @relation("PostMedia") // Link to media files
+
+  @@index([userId, isPremium, createdAt])
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+  AUDIO
+  DOCUMENT
+}
+
+model Comment {
+  id        String    @id @default(uuid())
+  content   String
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  postId    String
+  post      Post      @relation(fields: [postId], references: [id], onDelete: Cascade)
+  parentId  String?
+  parent    Comment?  @relation("CommentReplies", fields: [parentId], references: [id])
+  replies   Comment[] @relation("CommentReplies")
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([postId, userId, createdAt])
+}
+
+model Like {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  postId    String
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, postId])
+}
+
+model Purchase {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  postId String
+  post   Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
+  amount Float
+
+  // Square Payment Integration
+  squarePaymentId String?
+  squareOrderId   String?
+
+  status    PurchaseStatus @default(COMPLETED)
+  createdAt DateTime       @default(now())
+
+  @@index([userId, postId, status])
+}
+
+enum PurchaseStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+model Message {
+  id         String     @id @default(uuid())
+  content    String
+  mediaUrl   String?
+  mediaType  MediaType?
+  senderId   String
+  sender     User       @relation("sender", fields: [senderId], references: [id], onDelete: Cascade)
+  receiverId String
+  receiver   User       @relation("receiver", fields: [receiverId], references: [id], onDelete: Cascade)
+  isRead     Boolean    @default(false)
+  createdAt  DateTime   @default(now())
+
+  // Link to media attachment
+  mediaId String?
+  media   Media?  @relation("MessageMedia", fields: [mediaId], references: [id])
+
+  @@index([senderId, receiverId, createdAt])
+}
+
+model Notification {
+  id          String           @id @default(uuid())
+  userId      String
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type        NotificationType
+  title       String
+  content     String
+  isRead      Boolean          @default(false)
+  relatedId   String? // ID of related entity (post, comment, user, etc.)
+  relatedType String? // Type of related entity
+  createdAt   DateTime         @default(now())
+
+  @@index([userId, isRead, createdAt])
+}
+
+enum NotificationType {
+  NEW_SUBSCRIBER
+  NEW_COMMENT
+  NEW_MESSAGE
+  NEW_PURCHASE
+  SUBSCRIPTION_EXPIRING
+  PAYMENT_SUCCESS
+  PAYMENT_FAILED
+  SYSTEM
+}
+
+model PaymentMethod {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Square Payment Integration
+  squarePaymentMethodId String
+  cardId                String?
+
+  brand     String? // visa, mastercard, etc.
+  last4     String?
+  expMonth  Int?
+  expYear   Int?
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, isDefault])
+}
+
+model WalletTransaction {
+  id     String            @id @default(uuid())
+  userId String
+  user   User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount Float
+  type   TransactionType
+  status TransactionStatus @default(COMPLETED)
+
+  // Square Payment Integration
+  squareTransferId String?
+  squarePaymentId  String?
+
+  description String?
+  createdAt   DateTime @default(now())
+
+  @@index([userId, type, status, createdAt])
+}
+
+enum TransactionType {
+  DEPOSIT
+  WITHDRAWAL
+  SUBSCRIPTION_EARNING
+  CONTENT_PURCHASE_EARNING
+  SUBSCRIPTION_PAYMENT
+  CONTENT_PURCHASE_PAYMENT
+  REFUND
+  PLATFORM_FEE
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model Bookmark {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  postId    String
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, postId])
+  @@index([userId, createdAt])
+}
+
+model Media {
+  id            String       @id @default(uuid())
+  key           String       @unique // S3/DO Spaces key
+  url           String // Public URL
+  fileName      String // Original filename
+  contentType   String // MIME type
+  mediaType     MediaType // Type of media (enum)
+  uploadStatus  UploadStatus @default(PENDING)
+  statusMessage String? // Message related to upload status
+  userId        String // Owner of the media
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  folder        String // Logical folder for organization
+  metadata      Json? // Additional metadata (size, dimensions, etc.)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  // Relations to other models that use this media
+  posts    Post[]    @relation("PostMedia")
+  messages Message[] @relation("MessageMedia")
+
+  @@index([userId, mediaType, uploadStatus])
+  @@index([key])
+}
+
+enum UploadStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}

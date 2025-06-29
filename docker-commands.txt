@@ -1,0 +1,11 @@
+docker volume create pgdata
+
+docker run --name nf-db \
+-e POSTGRES_USER=admin \
+-e POSTGRES_PASSWORD=8882304322@Rk \
+-e POSTGRES_DB=maindb \
+-p 5432:5432 \
+-v pgdata:/var/lib/postgresql/data \
+-d postgres:14
+
+psql -h 3.101.88.182 -U admin -d maindb -p 5432
