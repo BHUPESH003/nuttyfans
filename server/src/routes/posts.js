@@ -18,71 +18,61 @@ import {
   getComments,
 } from "../controllers/commentController.js";
 import { protect } from "../middlewares/authMiddleware.js";
-import multer from "multer";
-import path from "path";
+import {
+  uploadMultiple,
+  handleUploadError,
+  setMediaQuality,
+} from "../middlewares/upload.js";
 
 const router = express.Router();
 
-// Configure multer storage
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, "public/uploads/temp");
-  },
-  filename: function (req, file, cb) {
-    cb(null, `${Date.now()}-${path.basename(file.originalname)}`);
-  },
-});
-
-// Filter files by type
-const fileFilter = (req, file, cb) => {
-  const validTypes = [
-    "image/jpeg",
-    "image/jpg",
-    "image/png",
-    "image/gif",
-    "video/mp4",
-    "audio/mpeg",
-  ];
-  if (validTypes.includes(file.mimetype)) {
-    cb(null, true);
-  } else {
-    cb(
-      new Error(
-        "Invalid file type. Only JPEG, PNG, GIF, MP4, and MP3 files are allowed."
-      ),
-      false
-    );
-  }
-};
-
-const upload = multer({
-  storage,
-  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
-  fileFilter,
-});
-
 // Base route: /api/posts
-router.post("/", protect, upload.array("files", 5), createPost);
+
+// Bookmarks routes (should be before parameterized routes)
+router.get("/bookmarks", protect, getBookmarkedPosts);
+
+// Post CRUD routes
+router.post(
+  "/",
+  protect,
+  uploadMultiple("files", 5),
+  handleUploadError,
+  setMediaQuality("high"),
+  createPost
+);
 router.get("/", getPosts);
 router.get("/:id", getPost);
-router.put("/:id", protect, updatePost);
+router.put(
+  "/:id",
+  protect,
+  uploadMultiple("files", 5),
+  handleUploadError,
+  setMediaQuality("high"),
+  updatePost
+);
 router.delete("/:id", protect, deletePost);
 
 // Like routes
 router.post("/:id/like", protect, likePost);
 router.delete("/:id/like", protect, unlikePost);
 
-// Bookmark routes
+// Bookmark routes (for specific posts)
 router.post("/:id/bookmark", protect, bookmarkPost);
 router.delete("/:id/bookmark", protect, unbookmarkPost);
-router.get("/bookmarks", protect, getBookmarkedPosts);
 
 // Comment routes
 router.post("/:postId/comments", protect, createComment);
 router.get("/:postId/comments", getComments);
 
-// Media routes
-router.post("/:id/media", protect, upload.array("files", 5), uploadMedia);
+// Media routes (for post-specific media management)
+router.post(
+  "/:id/media",
+  protect,
+  uploadMultiple("files", 5),
+  handleUploadError,
+  setMediaQuality("high"),
+  uploadMedia
+);
 router.delete("/:id/media/:index", protect, deleteMedia);
 
 export default router;

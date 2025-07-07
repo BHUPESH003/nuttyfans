@@ -1,10 +1,17 @@
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { OAuth2Client } from "google-auth-library";
+import speakeasy from "speakeasy";
+import QRCode from "qrcode";
 import prisma from "../config/prisma.js";
 import { generateTokens, verifyRefreshToken } from "../utils/jwtUtils.js";
 import emailService from "../services/emailService.js";
 import { config } from "../config/env.js";
+import {
+  uploadToSpaces,
+  getKeyFromUrl,
+  deleteFromSpaces,
+} from "../services/digitalOceanService.js";
 
 // Initialize Google OAuth client
 const googleClient = new OAuth2Client(
@@ -13,31 +20,88 @@ const googleClient = new OAuth2Client(
   config.GOOGLE_CALLBACK_URL
 );
 
+// Helper function to generate OTP
+const generateOTP = () => {
+  return Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit OTP
+};
+
+// Helper function to clean up user data for response
+const cleanUserData = (user) => {
+  const {
+    password,
+    emailVerificationToken,
+    passwordResetToken,
+    otpToken,
+    twoFactorSecret,
+    backupCodes,
+    googleId,
+    ...cleanUser
+  } = user;
+  return cleanUser;
+};
+
+// Helper function to generate unique username
+const generateUniqueUsername = async (email, fullName) => {
+  let baseUsername = email.split("@")[0];
+
+  // Clean username
+  baseUsername = baseUsername.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+
+  if (!baseUsername || baseUsername.length < 3) {
+    baseUsername =
+      fullName?.replace(/[^a-zA-Z0-9]/g, "").toLowerCase() || "user";
+  }
+
+  let username = baseUsername;
+  let counter = 1;
+
+  while (await prisma.user.findUnique({ where: { username } })) {
+    username = `${baseUsername}${counter}`;
+    counter++;
+  }
+
+  return username;
+};
+
+// Register with email/password
 export const register = async (req, res, next) => {
   try {
-    const { email, username, password, confirmPassword, name } = req.body;
+    const {
+      email,
+      username,
+      password,
+      confirmPassword,
+      firstName,
+      lastName,
+      fullName,
+    } = req.body;
 
     // Validate required fields
-    if (!email || !username || !password || !confirmPassword || !name) {
-      const error = new Error(
-        "All fields are required: email, username, password, confirmPassword, name"
-      );
+    if (!email || !username) {
+      const error = new Error("Email and username are required");
       error.statusCode = 400;
       return next(error);
     }
 
-    // Validate password confirmation
-    if (password !== confirmPassword) {
-      const error = new Error("Passwords do not match");
-      error.statusCode = 400;
-      return next(error);
-    }
+    // If password provided, validate it
+    if (password) {
+      if (!confirmPassword) {
+        const error = new Error("Password confirmation is required");
+        error.statusCode = 400;
+        return next(error);
+      }
 
-    // Validate password strength
-    if (password.length < 6) {
-      const error = new Error("Password must be at least 6 characters long");
-      error.statusCode = 400;
-      return next(error);
+      if (password !== confirmPassword) {
+        const error = new Error("Passwords do not match");
+        error.statusCode = 400;
+        return next(error);
+      }
+
+      if (password.length < 8) {
+        const error = new Error("Password must be at least 8 characters long");
+        error.statusCode = 400;
+        return next(error);
+      }
     }
 
     // Check if email already exists
@@ -62,14 +126,17 @@ export const register = async (req, res, next) => {
       return next(error);
     }
 
-    // Hash password
-    const salt = await bcrypt.genSalt(12);
-    const hashedPassword = await bcrypt.hash(password, salt);
+    // Hash password if provided
+    let hashedPassword = null;
+    if (password) {
+      const salt = await bcrypt.genSalt(12);
+      hashedPassword = await bcrypt.hash(password, salt);
+    }
 
     // Generate email verification token
     const emailVerificationToken = crypto.randomBytes(32).toString("hex");
     const emailVerificationExpires = new Date();
-    emailVerificationExpires.setHours(emailVerificationExpires.getHours() + 24); // 24 hours
+    emailVerificationExpires.setHours(emailVerificationExpires.getHours() + 24);
 
     // Create user
     const user = await prisma.user.create({
@@ -77,11 +144,15 @@ export const register = async (req, res, next) => {
         email,
         username,
         password: hashedPassword,
-        fullName: name, // Use name for fullName field
+        firstName,
+        lastName,
+        fullName:
+          fullName || `${firstName || ""} ${lastName || ""}`.trim() || username,
         role: "USER",
         emailVerificationToken,
         emailVerificationExpires,
         isEmailVerified: false,
+        language: req.headers["accept-language"]?.split(",")[0] || "en",
       },
     });
 
@@ -89,27 +160,32 @@ export const register = async (req, res, next) => {
     try {
       await emailService.sendVerificationEmail(
         email,
-        username,
+        user.fullName || username,
         emailVerificationToken
       );
     } catch (emailError) {
       console.error("Failed to send verification email:", emailError);
-      // Don't fail registration if email fails
     }
 
-    // Don't generate tokens yet - user needs to verify email first
-    const {
-      password: _,
-      emailVerificationToken: __,
-      ...userWithoutSensitiveData
-    } = user;
+    // Create welcome notification
+    await prisma.notification.create({
+      data: {
+        userId: user.id,
+        type: "WELCOME",
+        title: "Welcome to NuttyFans!",
+        content: `Welcome ${
+          user.fullName || user.username
+        }! Please verify your email to get started.`,
+      },
+    });
 
     res.status(201).json({
       success: true,
       message:
         "Registration successful! Please check your email to verify your account.",
       data: {
-        user: userWithoutSensitiveData,
+        user: cleanUserData(user),
+        requiresEmailVerification: true,
       },
     });
   } catch (error) {
@@ -117,87 +193,98 @@ export const register = async (req, res, next) => {
   }
 };
 
+// Login with email/password
 export const login = async (req, res, next) => {
   try {
     const { email, username, password } = req.body;
+
+    if (!password && !email && !username) {
+      const error = new Error("Email/username and password are required");
+      error.statusCode = 400;
+      return next(error);
+    }
 
     // Find user by email or username
     const user = await prisma.user.findFirst({
       where: {
         OR: [{ email: email || "" }, { username: username || "" }],
       },
+      include: {
+        profile: true,
+      },
     });
 
-    // Check if user exists and password is correct
-    if (!user || !(await bcrypt.compare(password, user.password))) {
+    // Check if user exists
+    if (!user) {
       const error = new Error("Invalid credentials");
-      error.statusCode = 400;
+      error.statusCode = 401;
+      return next(error);
+    }
+
+    // Check if user has password (not OAuth only)
+    if (!user.password) {
+      const error = new Error(
+        "Please use Google sign-in or request a login link"
+      );
+      error.statusCode = 401;
+      return next(error);
+    }
+
+    // Verify password
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
+      const error = new Error("Invalid credentials");
+      error.statusCode = 401;
       return next(error);
     }
 
     // Check if account is active
     if (!user.isActive) {
       const error = new Error("Your account has been deactivated");
-      error.statusCode = 400;
+      error.statusCode = 403;
       return next(error);
     }
 
     // Check if email is verified
     if (!user.isEmailVerified) {
-      // Check if verification token has expired
-      if (
-        user.emailVerificationExpires &&
-        user.emailVerificationExpires < new Date()
-      ) {
-        // Generate new verification token
-        const emailVerificationToken = crypto.randomBytes(32).toString("hex");
-        const emailVerificationExpires = new Date();
-        emailVerificationExpires.setHours(
-          emailVerificationExpires.getHours() + 24
-        );
+      return res.status(401).json({
+        success: false,
+        message: "Please verify your email address before logging in",
+        error: "EMAIL_NOT_VERIFIED",
+        data: {
+          userId: user.id,
+          email: user.email,
+        },
+      });
+    }
 
-        await prisma.user.update({
-          where: { id: user.id },
-          data: {
-            emailVerificationToken,
-            emailVerificationExpires,
-          },
-        });
+    // Update last active
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        lastActiveAt: new Date(),
+        isOnline: true,
+      },
+    });
 
-        // Resend verification email
-        try {
-          await emailService.sendVerificationEmail(
-            user.email,
-            user.username,
-            emailVerificationToken
-          );
-        } catch (emailError) {
-          console.error("Failed to resend verification email:", emailError);
-        }
-      }
-
-      const error = new Error(
-        "Please verify your email address before logging in. A new verification email has been sent."
-      );
-      error.statusCode = 401;
-      return next(error);
+    // Check if 2FA is enabled
+    if (user.twoFactorEnabled) {
+      return res.status(200).json({
+        success: true,
+        message: "2FA required",
+        requiresTwoFactor: true,
+        tempToken: generateTokens({ id: user.id, temp: true }).accessToken,
+      });
     }
 
     // Generate tokens
     const tokens = generateTokens(user);
 
-    // Remove sensitive data
-    const {
-      password: _,
-      emailVerificationToken: __,
-      passwordResetToken: ___,
-      ...userWithoutPassword
-    } = user;
-
     res.status(200).json({
       success: true,
+      message: "Login successful",
       data: {
-        user: userWithoutPassword,
+        user: cleanUserData(user),
         ...tokens,
       },
     });
@@ -206,6 +293,290 @@ export const login = async (req, res, next) => {
   }
 };
 
+// OTP-based passwordless login
+export const requestLoginOTP = async (req, res, next) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      const error = new Error("Email is required");
+      error.statusCode = 400;
+      return next(error);
+    }
+
+    // Find user by email
+    const user = await prisma.user.findUnique({
+      where: { email },
+    });
+
+    if (!user) {
+      // Don't reveal if email exists
+      return res.status(200).json({
+        success: true,
+        message: "If this email is registered, you will receive a login link",
+      });
+    }
+
+    // Check if account is active
+    if (!user.isActive) {
+      const error = new Error("Your account has been deactivated");
+      error.statusCode = 403;
+      return next(error);
+    }
+
+    // Generate OTP
+    const otp = generateOTP();
+    const otpExpires = new Date();
+    otpExpires.setMinutes(otpExpires.getMinutes() + 10); // 10 minutes
+
+    // Update user with OTP
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        otpToken: otp,
+        otpExpires,
+        otpAttempts: 0,
+      },
+    });
+
+    // Send OTP email
+    try {
+      await emailService.sendLoginOTP(
+        email,
+        user.fullName || user.username,
+        otp
+      );
+    } catch (emailError) {
+      console.error("Failed to send OTP email:", emailError);
+      const error = new Error("Failed to send login code");
+      error.statusCode = 500;
+      return next(error);
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Login code sent to your email",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Verify OTP and login
+export const verifyLoginOTP = async (req, res, next) => {
+  try {
+    const { email, otp } = req.body;
+
+    if (!email || !otp) {
+      const error = new Error("Email and OTP are required");
+      error.statusCode = 400;
+      return next(error);
+    }
+
+    // Find user
+    const user = await prisma.user.findUnique({
+      where: { email },
+      include: {
+        profile: true,
+      },
+    });
+
+    if (!user) {
+      const error = new Error("Invalid credentials");
+      error.statusCode = 401;
+      return next(error);
+    }
+
+    // Check OTP attempts
+    if (user.otpAttempts >= 3) {
+      const error = new Error(
+        "Too many failed attempts. Please request a new code"
+      );
+      error.statusCode = 429;
+      return next(error);
+    }
+
+    // Check if OTP is valid and not expired
+    if (
+      !user.otpToken ||
+      user.otpToken !== otp ||
+      user.otpExpires < new Date()
+    ) {
+      // Increment attempts
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          otpAttempts: user.otpAttempts + 1,
+        },
+      });
+
+      const error = new Error("Invalid or expired login code");
+      error.statusCode = 401;
+      return next(error);
+    }
+
+    // Clear OTP and update user
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        otpToken: null,
+        otpExpires: null,
+        otpAttempts: 0,
+        isEmailVerified: true, // Auto-verify email with OTP login
+        lastActiveAt: new Date(),
+        isOnline: true,
+      },
+    });
+
+    // Generate tokens
+    const tokens = generateTokens(user);
+
+    res.status(200).json({
+      success: true,
+      message: "Login successful",
+      data: {
+        user: cleanUserData(user),
+        ...tokens,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Google OAuth login
+export const googleLogin = async (req, res, next) => {
+  try {
+    const { credential, clientId } = req.body;
+
+    if (!credential) {
+      const error = new Error("Google credential is required");
+      error.statusCode = 400;
+      return next(error);
+    }
+
+    // Verify the Google token
+    let ticket;
+    try {
+      ticket = await googleClient.verifyIdToken({
+        idToken: credential,
+        audience: config.GOOGLE_CLIENT_ID,
+      });
+    } catch (verifyError) {
+      console.error("Google token verification failed:", verifyError);
+      const error = new Error("Invalid Google token");
+      error.statusCode = 401;
+      return next(error);
+    }
+
+    const payload = ticket.getPayload();
+    const {
+      sub: googleId,
+      email,
+      name: fullName,
+      given_name: firstName,
+      family_name: lastName,
+      picture: googleAvatarUrl,
+      email_verified: emailVerified,
+    } = payload;
+
+    // Find existing user by Google ID or email
+    let user = await prisma.user.findFirst({
+      where: {
+        OR: [{ googleId }, { email }],
+      },
+      include: {
+        profile: true,
+      },
+    });
+
+    if (user) {
+      // Update existing user with Google info if not set
+      const updateData = {};
+      if (!user.googleId) updateData.googleId = googleId;
+      if (!user.googleEmail) updateData.googleEmail = email;
+      if (!user.googleAvatarUrl) updateData.googleAvatarUrl = googleAvatarUrl;
+      if (!user.isEmailVerified && emailVerified)
+        updateData.isEmailVerified = true;
+      if (!user.avatarUrl && googleAvatarUrl)
+        updateData.avatarUrl = googleAvatarUrl;
+
+      updateData.lastActiveAt = new Date();
+      updateData.isOnline = true;
+
+      if (Object.keys(updateData).length > 0) {
+        user = await prisma.user.update({
+          where: { id: user.id },
+          data: updateData,
+          include: {
+            profile: true,
+          },
+        });
+      }
+    } else {
+      // Create new user
+      const username = await generateUniqueUsername(email, fullName);
+
+      user = await prisma.user.create({
+        data: {
+          email,
+          username,
+          fullName,
+          firstName,
+          lastName,
+          googleId,
+          googleEmail: email,
+          googleAvatarUrl,
+          avatarUrl: googleAvatarUrl,
+          isEmailVerified: emailVerified || false,
+          role: "USER",
+          lastActiveAt: new Date(),
+          isOnline: true,
+        },
+        include: {
+          profile: true,
+        },
+      });
+
+      // Create welcome notification
+      await prisma.notification.create({
+        data: {
+          userId: user.id,
+          type: "WELCOME",
+          title: "Welcome to NuttyFans!",
+          content: `Welcome ${user.fullName}! Your account has been created successfully.`,
+        },
+      });
+    }
+
+    // Check if account is active
+    if (!user.isActive) {
+      const error = new Error("Your account has been deactivated");
+      error.statusCode = 403;
+      return next(error);
+    }
+
+    // Generate tokens
+    const tokens = generateTokens(user);
+
+    res.status(200).json({
+      success: true,
+      message:
+        user.createdAt === user.updatedAt
+          ? "Account created and login successful"
+          : "Login successful",
+      data: {
+        user: cleanUserData(user),
+        ...tokens,
+        isNewUser: user.createdAt === user.updatedAt,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Email verification
 export const verifyEmail = async (req, res, next) => {
   try {
     const { token } = req.body;
@@ -242,9 +613,22 @@ export const verifyEmail = async (req, res, next) => {
       },
     });
 
+    // Create notification
+    await prisma.notification.create({
+      data: {
+        userId: user.id,
+        type: "EMAIL_VERIFIED",
+        title: "Email Verified",
+        content: "Your email address has been successfully verified!",
+      },
+    });
+
     // Send welcome email
     try {
-      await emailService.sendWelcomeEmail(user.email, user.username);
+      await emailService.sendWelcomeEmail(
+        user.email,
+        user.fullName || user.username
+      );
     } catch (emailError) {
       console.error("Failed to send welcome email:", emailError);
     }
@@ -252,14 +636,11 @@ export const verifyEmail = async (req, res, next) => {
     // Generate tokens now that email is verified
     const tokens = generateTokens(updatedUser);
 
-    // Remove sensitive data
-    const { password: _, ...userWithoutPassword } = updatedUser;
-
     res.status(200).json({
       success: true,
       message: "Email verified successfully! Welcome to the platform.",
       data: {
-        user: userWithoutPassword,
+        user: cleanUserData(updatedUser),
         ...tokens,
       },
     });
@@ -268,6 +649,7 @@ export const verifyEmail = async (req, res, next) => {
   }
 };
 
+// Resend verification email
 export const resendVerificationEmail = async (req, res, next) => {
   try {
     const { email } = req.body;
@@ -302,6 +684,7 @@ export const resendVerificationEmail = async (req, res, next) => {
     const emailVerificationExpires = new Date();
     emailVerificationExpires.setHours(emailVerificationExpires.getHours() + 24);
 
+    // Update user with new token
     await prisma.user.update({
       where: { id: user.id },
       data: {
@@ -313,8 +696,8 @@ export const resendVerificationEmail = async (req, res, next) => {
     // Send verification email
     try {
       await emailService.sendVerificationEmail(
-        user.email,
-        user.username,
+        email,
+        user.fullName || user.username,
         emailVerificationToken
       );
     } catch (emailError) {
@@ -326,13 +709,14 @@ export const resendVerificationEmail = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      message: "Verification email sent successfully",
+      message: "Verification email has been sent.",
     });
   } catch (error) {
     next(error);
   }
 };
 
+// Refresh token
 export const refreshToken = async (req, res, next) => {
   try {
     const { refreshToken } = req.body;
@@ -343,62 +727,63 @@ export const refreshToken = async (req, res, next) => {
       return next(error);
     }
 
+    // Verify refresh token
     const decoded = verifyRefreshToken(refreshToken);
 
-    const user = await prisma.user.findUnique({
-      where: { id: decoded.id || decoded.sub },
-      include: {
-        profile: true,
-        _count: {
-          select: {
-            posts: true,
-            subscribers: true,
-            subscriptions: true,
-          },
-        },
-      },
-    });
-
-    if (!user || !user.isActive) {
-      const error = new Error("Invalid refresh token or user deactivated");
+    if (!decoded) {
+      const error = new Error("Invalid refresh token");
       error.statusCode = 401;
       return next(error);
     }
 
+    // Get user
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.id },
+      include: {
+        profile: true,
+      },
+    });
+
+    if (!user || !user.isActive) {
+      const error = new Error("User not found or inactive");
+      error.statusCode = 401;
+      return next(error);
+    }
+
+    // Generate new tokens
     const tokens = generateTokens(user);
-    const { password, ...userWithoutPassword } = user;
 
     res.status(200).json({
       success: true,
       data: {
-        user: userWithoutPassword,
+        user: cleanUserData(user),
         ...tokens,
       },
     });
   } catch (error) {
-    if (
-      error.name === "JsonWebTokenError" ||
-      error.name === "TokenExpiredError"
-    ) {
-      const customError = new Error("Invalid or expired refresh token");
-      customError.statusCode = 401;
-      return next(customError);
-    }
     next(error);
   }
 };
 
+// Get current user
 export const getCurrentUser = async (req, res, next) => {
   try {
     const user = await prisma.user.findUnique({
       where: { id: req.user.id },
       include: {
-        profile: true,
+        profile: {
+          include: {
+            categories: true,
+          },
+        },
         _count: {
           select: {
             posts: true,
             subscribers: true,
             subscriptions: true,
+            notifications: {
+              where: { isRead: false },
+            },
           },
         },
       },
@@ -410,19 +795,29 @@ export const getCurrentUser = async (req, res, next) => {
       return next(error);
     }
 
-    const { password, ...userWithoutPassword } = user;
-
     res.status(200).json({
       success: true,
-      data: userWithoutPassword,
+      data: {
+        user: cleanUserData(user),
+      },
     });
   } catch (error) {
     next(error);
   }
 };
 
+// Logout
 export const logout = async (req, res, next) => {
   try {
+    // Update user online status
+    await prisma.user.update({
+      where: { id: req.user.id },
+      data: {
+        isOnline: false,
+        lastActiveAt: new Date(),
+      },
+    });
+
     res.status(200).json({
       success: true,
       message: "Logged out successfully",
@@ -432,6 +827,7 @@ export const logout = async (req, res, next) => {
   }
 };
 
+// Forgot password
 export const forgotPassword = async (req, res, next) => {
   try {
     const { email } = req.body;
@@ -446,83 +842,83 @@ export const forgotPassword = async (req, res, next) => {
       where: { email },
     });
 
-    // Always return success message to prevent email enumeration
-    const successMessage =
-      "If your email is registered, you'll receive a password reset link";
-
     if (!user) {
+      // Don't reveal if email exists
       return res.status(200).json({
         success: true,
-        message: successMessage,
+        message:
+          "If this email is registered, you will receive a password reset link",
       });
     }
 
-    // Only send reset email if user is verified
-    if (!user.isEmailVerified) {
-      return res.status(200).json({
-        success: true,
-        message: successMessage,
-      });
-    }
-
-    // Generate password reset token
-    const passwordResetToken = crypto.randomBytes(32).toString("hex");
-    const passwordResetExpires = new Date();
-    passwordResetExpires.setHours(passwordResetExpires.getHours() + 1); // 1 hour
+    // Generate reset token
+    const resetToken = crypto.randomBytes(32).toString("hex");
+    const resetExpires = new Date();
+    resetExpires.setHours(resetExpires.getHours() + 1); // 1 hour
 
     // Update user with reset token
     await prisma.user.update({
       where: { id: user.id },
       data: {
-        passwordResetToken,
-        passwordResetExpires,
+        passwordResetToken: resetToken,
+        passwordResetExpires: resetExpires,
       },
     });
 
-    // Send password reset email
+    // Send reset email
     try {
       await emailService.sendPasswordResetEmail(
-        user.email,
-        user.username,
-        passwordResetToken
+        email,
+        user.fullName || user.username,
+        resetToken
       );
     } catch (emailError) {
       console.error("Failed to send password reset email:", emailError);
-      // Don't reveal email sending failure
+      const error = new Error("Failed to send password reset email");
+      error.statusCode = 500;
+      return next(error);
     }
 
     res.status(200).json({
       success: true,
-      message: successMessage,
+      message: "Password reset link has been sent to your email",
     });
   } catch (error) {
     next(error);
   }
 };
 
+// Reset password
 export const resetPassword = async (req, res, next) => {
   try {
-    const { token, password } = req.body;
+    const { token, password, confirmPassword } = req.body;
 
-    if (!token || !password) {
-      const error = new Error("Token and password are required");
+    if (!token || !password || !confirmPassword) {
+      const error = new Error(
+        "Token, password, and confirmPassword are required"
+      );
       error.statusCode = 400;
       return next(error);
     }
 
-    // Validate password strength
-    if (password.length < 6) {
-      const error = new Error("Password must be at least 6 characters long");
+    if (password !== confirmPassword) {
+      const error = new Error("Passwords do not match");
       error.statusCode = 400;
       return next(error);
     }
 
-    // Find user with valid reset token
+    if (password.length < 8) {
+      const error = new Error("Password must be at least 8 characters long");
+      error.statusCode = 400;
+      return next(error);
+    }
+
+    // Find user with reset token
     const user = await prisma.user.findFirst({
       where: {
         passwordResetToken: token,
         passwordResetExpires: {
-          gt: new Date(), // Token must not be expired
+          gt: new Date(),
         },
       },
     });
@@ -537,7 +933,7 @@ export const resetPassword = async (req, res, next) => {
     const salt = await bcrypt.genSalt(12);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    // Update user password and clear reset token
+    // Update user password
     await prisma.user.update({
       where: { id: user.id },
       data: {
@@ -547,124 +943,238 @@ export const resetPassword = async (req, res, next) => {
       },
     });
 
+    // Create security notification
+    await prisma.notification.create({
+      data: {
+        userId: user.id,
+        type: "PASSWORD_CHANGED",
+        title: "Password Changed",
+        content: "Your password has been successfully changed.",
+      },
+    });
+
     res.status(200).json({
       success: true,
       message:
-        "Password reset successfully. You can now log in with your new password.",
+        "Password reset successful. You can now log in with your new password.",
     });
   } catch (error) {
     next(error);
   }
 };
 
-export const googleLogin = async (req, res, next) => {
+// Setup 2FA
+export const setup2FA = async (req, res, next) => {
   try {
-    const { token } = req.body;
-
-    if (!token) {
-      const error = new Error("Google token is required");
+    if (req.user.twoFactorEnabled) {
+      const error = new Error("2FA is already enabled");
       error.statusCode = 400;
       return next(error);
     }
 
-    // Verify Google token
-    const ticket = await googleClient.verifyIdToken({
-      idToken: token,
-      audience: config.GOOGLE_CLIENT_ID,
+    // Generate secret
+    const secret = speakeasy.generateSecret({
+      name: `NuttyFans (${req.user.email})`,
+      issuer: "NuttyFans",
+      length: 20,
     });
 
-    const payload = ticket.getPayload();
-    const { email, name, picture, sub: googleId } = payload;
+    // Generate QR code
+    const qrCodeUrl = await QRCode.toDataURL(secret.otpauth_url);
 
-    if (!email) {
-      const error = new Error("Email not provided by Google");
-      error.statusCode = 400;
-      return next(error);
-    }
-
-    // Check if user already exists
-    let user = await prisma.user.findUnique({
-      where: { email },
+    // Temporarily store secret (will be confirmed when user verifies)
+    await prisma.user.update({
+      where: { id: req.user.id },
+      data: {
+        twoFactorSecret: secret.base32,
+      },
     });
-
-    if (user) {
-      // User exists, update their Google info if needed
-      if (!user.googleId) {
-        user = await prisma.user.update({
-          where: { id: user.id },
-          data: {
-            googleId,
-            avatarUrl: picture || user.avatarUrl,
-            isEmailVerified: true, // Google emails are already verified
-          },
-        });
-      }
-    } else {
-      // Create new user
-      const username = email.split("@")[0] + Math.floor(Math.random() * 1000);
-
-      user = await prisma.user.create({
-        data: {
-          email,
-          username,
-          fullName: name,
-          avatarUrl: picture,
-          googleId,
-          password: await bcrypt.hash(
-            crypto.randomBytes(20).toString("hex"),
-            12
-          ), // Random password
-          role: "USER",
-          isEmailVerified: true, // Google emails are already verified
-          isActive: true,
-        },
-      });
-
-      // Send welcome email
-      try {
-        await emailService.sendWelcomeEmail(email, name);
-      } catch (emailError) {
-        console.error("Failed to send welcome email:", emailError);
-      }
-    }
-
-    // Generate tokens
-    const tokens = generateTokens(user);
-
-    // Remove sensitive data
-    const {
-      password: _,
-      emailVerificationToken: __,
-      passwordResetToken: ___,
-      ...userWithoutPassword
-    } = user;
 
     res.status(200).json({
       success: true,
       data: {
-        user: userWithoutPassword,
-        ...tokens,
+        secret: secret.base32,
+        qrCode: qrCodeUrl,
+        backupCodes: [], // Will be generated after verification
       },
+      message:
+        "Scan the QR code with your authenticator app and verify to complete setup",
     });
   } catch (error) {
-    console.error("Google OAuth error:", error);
     next(error);
   }
 };
 
-export const getGoogleAuthUrl = async (req, res, next) => {
+// Verify and enable 2FA
+export const enable2FA = async (req, res, next) => {
   try {
-    const url = googleClient.generateAuthUrl({
-      access_type: "offline",
-      scope: [
-        "https://www.googleapis.com/auth/userinfo.profile",
-        "https://www.googleapis.com/auth/userinfo.email",
-      ],
+    const { token } = req.body;
+
+    if (!token) {
+      const error = new Error("Verification token is required");
+      error.statusCode = 400;
+      return next(error);
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+    });
+
+    if (!user.twoFactorSecret) {
+      const error = new Error("2FA setup not initiated");
+      error.statusCode = 400;
+      return next(error);
+    }
+
+    // Verify token
+    const verified = speakeasy.totp.verify({
+      secret: user.twoFactorSecret,
+      encoding: "base32",
+      token,
+      window: 2,
+    });
+
+    if (!verified) {
+      const error = new Error("Invalid verification token");
+      error.statusCode = 400;
+      return next(error);
+    }
+
+    // Generate backup codes
+    const backupCodes = Array.from({ length: 10 }, () =>
+      crypto.randomBytes(4).toString("hex").toUpperCase()
+    );
+
+    // Enable 2FA
+    await prisma.user.update({
+      where: { id: req.user.id },
+      data: {
+        twoFactorEnabled: true,
+        backupCodes,
+      },
     });
 
     res.status(200).json({
       success: true,
-      data: { url },
+      data: {
+        backupCodes,
+      },
+      message:
+        "2FA has been successfully enabled. Save these backup codes in a safe place.",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Verify 2FA token
+export const verify2FA = async (req, res, next) => {
+  try {
+    const { token, tempToken } = req.body;
+
+    if (!token || !tempToken) {
+      const error = new Error("Token and tempToken are required");
+      error.statusCode = 400;
+      return next(error);
+    }
+
+    // Verify temp token
+    const tempDecoded = verifyRefreshToken(tempToken);
+    if (!tempDecoded || !tempDecoded.temp) {
+      const error = new Error("Invalid temporary token");
+      error.statusCode = 401;
+      return next(error);
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: tempDecoded.id },
+      include: {
+        profile: true,
+      },
+    });
+
+    if (!user || !user.twoFactorEnabled) {
+      const error = new Error("2FA not enabled for this user");
+      error.statusCode = 400;
+      return next(error);
+    }
+
+    // Verify 2FA token
+    const verified = speakeasy.totp.verify({
+      secret: user.twoFactorSecret,
+      encoding: "base32",
+      token,
+      window: 2,
+    });
+
+    // If TOTP failed, try backup codes
+    let usedBackupCode = false;
+    if (!verified && user.backupCodes.includes(token.toUpperCase())) {
+      usedBackupCode = true;
+
+      // Remove used backup code
+      const updatedBackupCodes = user.backupCodes.filter(
+        (code) => code !== token.toUpperCase()
+      );
+
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          backupCodes: updatedBackupCodes,
+        },
+      });
+    }
+
+    if (!verified && !usedBackupCode) {
+      const error = new Error("Invalid 2FA token");
+      error.statusCode = 400;
+      return next(error);
+    }
+
+    // Update user activity
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        lastActiveAt: new Date(),
+        isOnline: true,
+      },
+    });
+
+    // Generate real tokens
+    const tokens = generateTokens(user);
+
+    res.status(200).json({
+      success: true,
+      message: usedBackupCode
+        ? "Login successful (backup code used)"
+        : "Login successful",
+      data: {
+        user: cleanUserData(user),
+        ...tokens,
+        backupCodesRemaining: usedBackupCode
+          ? user.backupCodes.length - 1
+          : user.backupCodes.length,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Get Google Auth URL
+export const getGoogleAuthUrl = async (req, res, next) => {
+  try {
+    const authUrl = googleClient.generateAuthUrl({
+      access_type: "offline",
+      scope: ["profile", "email"],
+      include_granted_scopes: true,
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        authUrl,
+      },
     });
   } catch (error) {
     next(error);

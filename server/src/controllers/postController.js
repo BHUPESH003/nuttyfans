@@ -5,8 +5,29 @@ import {
   getKeyFromUrl,
   deleteFromSpaces,
 } from "../services/digitalOceanService.js";
+import fs from "fs";
+
+// Helper function to cleanup temp files
+const cleanupTempFiles = (files) => {
+  if (files && files.length > 0) {
+    files.forEach((file) => {
+      try {
+        if (fs.existsSync(file.path)) {
+          fs.unlinkSync(file.path);
+        }
+      } catch (error) {
+        console.warn(
+          `Failed to cleanup temp file ${file.path}:`,
+          error.message
+        );
+      }
+    });
+  }
+};
 
 export const createPost = async (req, res, next) => {
+  const uploadedFiles = req.files; // Store reference for cleanup
+
   try {
     const { title, content, isPremium, price, categories } = req.body;
     const files = req.files;
@@ -14,83 +35,126 @@ export const createPost = async (req, res, next) => {
     if (isPremium && !price) {
       const error = new Error("Premium posts require a price");
       error.statusCode = 400;
+      // Cleanup temp files before throwing error
+      cleanupTempFiles(uploadedFiles);
       return next(error);
     }
 
     const mediaUrls = [];
     const mediaTypes = [];
+    const uploadedKeys = []; // Track uploaded keys for rollback
 
     if (files && files.length > 0) {
-      for (const file of files) {
-        const quality = req.mediaQuality || "high";
+      try {
+        for (const file of files) {
+          const quality = req.mediaQuality || "high";
 
-        const result = await uploadToSpaces(file.path, "posts", {
-          quality,
-          userId: req.user.id,
-        });
-        mediaUrls.push(result.url);
-        mediaTypes.push(getMediaTypeFromFilename(file.originalname));
+          const result = await uploadToSpaces(file.path, "posts", {
+            quality,
+            userId: req.user.id,
+          });
+
+          mediaUrls.push(result.url);
+          mediaTypes.push(getMediaTypeFromFilename(file.originalname));
+          uploadedKeys.push(result.key);
+        }
+      } catch (uploadError) {
+        // If upload fails, cleanup both temp files and any uploaded files
+        cleanupTempFiles(uploadedFiles);
+
+        // Cleanup any successfully uploaded files
+        for (const key of uploadedKeys) {
+          try {
+            await deleteFromSpaces(key);
+          } catch (deleteError) {
+            console.warn(
+              `Failed to cleanup uploaded file ${key}:`,
+              deleteError.message
+            );
+          }
+        }
+
+        throw new Error(`File upload failed: ${uploadError.message}`);
       }
     }
 
-    const post = await prisma.post.create({
-      data: {
-        title,
-        content,
-        isPremium: isPremium || false,
-        price: isPremium ? parseFloat(price) : null,
-        mediaUrls,
-        mediaType: mediaTypes,
-        userId: req.user.id,
-        categories: {
-          connect: categories ? categories.map((id) => ({ id })) : [],
-        },
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            username: true,
-            avatarUrl: true,
+    try {
+      const post = await prisma.post.create({
+        data: {
+          title,
+          content,
+          isPremium: isPremium || false,
+          price: isPremium ? parseFloat(price) : null,
+          mediaUrls,
+          mediaType: mediaTypes,
+          userId: req.user.id,
+          categories: {
+            connect: categories ? categories.map((id) => ({ id })) : [],
           },
         },
-        categories: true,
-      },
-    });
-
-    if (req.user.profile?.isVerified) {
-      const activeSubscribers = await prisma.subscription.findMany({
-        where: {
-          creatorId: req.user.id,
-          status: "ACTIVE",
-          currentPeriodEnd: { gte: new Date() },
-        },
-        select: {
-          subscriberId: true,
+        include: {
+          user: {
+            select: {
+              id: true,
+              username: true,
+              avatarUrl: true,
+            },
+          },
+          categories: true,
         },
       });
 
-      const notificationPromises = activeSubscribers.map((sub) =>
-        prisma.notification.create({
-          data: {
-            userId: sub.subscriberId,
-            type: "NEW_CONTENT",
-            title: "New Content",
-            content: `${req.user.username} has posted new content`,
-            relatedId: post.id,
-            relatedType: "Post",
+      // Send notifications to subscribers
+      if (req.user.profile?.isVerified) {
+        const activeSubscribers = await prisma.subscription.findMany({
+          where: {
+            creatorId: req.user.id,
+            status: "ACTIVE",
+            currentPeriodEnd: { gte: new Date() },
           },
-        })
-      );
+          select: {
+            subscriberId: true,
+          },
+        });
 
-      await Promise.all(notificationPromises);
+        const notificationPromises = activeSubscribers.map((sub) =>
+          prisma.notification.create({
+            data: {
+              userId: sub.subscriberId,
+              type: "NEW_CONTENT",
+              title: "New Content",
+              content: `${req.user.username} has posted new content`,
+              relatedId: post.id,
+              relatedType: "Post",
+            },
+          })
+        );
+
+        await Promise.all(notificationPromises);
+      }
+
+      res.status(201).json({
+        success: true,
+        data: post,
+      });
+    } catch (dbError) {
+      // If database operation fails, cleanup uploaded files
+      for (const key of uploadedKeys) {
+        try {
+          await deleteFromSpaces(key);
+        } catch (deleteError) {
+          console.warn(
+            `Failed to cleanup uploaded file after DB error ${key}:`,
+            deleteError.message
+          );
+        }
+      }
+
+      throw new Error(`Database operation failed: ${dbError.message}`);
     }
-
-    res.status(201).json({
-      success: true,
-      data: post,
-    });
   } catch (error) {
+    // Final cleanup of temp files if they still exist
+    cleanupTempFiles(uploadedFiles);
     next(error);
   }
 };
@@ -385,6 +449,8 @@ export const getPost = async (req, res, next) => {
 };
 
 export const updatePost = async (req, res, next) => {
+  const uploadedFiles = req.files; // Store reference for cleanup
+
   try {
     const { id } = req.params;
     const { title, content, isPremium, price, categories, isArchived } =
@@ -397,12 +463,16 @@ export const updatePost = async (req, res, next) => {
     if (!post) {
       const error = new Error("Post not found");
       error.statusCode = 404;
+      // Cleanup temp files before throwing error
+      cleanupTempFiles(uploadedFiles);
       return next(error);
     }
 
     if (post.userId !== req.user.id) {
       const error = new Error("Not authorized to update this post");
       error.statusCode = 403;
+      // Cleanup temp files before throwing error
+      cleanupTempFiles(uploadedFiles);
       return next(error);
     }
 
@@ -418,6 +488,8 @@ export const updatePost = async (req, res, next) => {
       if (isPremium && !price && !post.price) {
         const error = new Error("Premium posts require a price");
         error.statusCode = 400;
+        // Cleanup temp files before throwing error
+        cleanupTempFiles(uploadedFiles);
         return next(error);
       }
 
@@ -428,27 +500,35 @@ export const updatePost = async (req, res, next) => {
       }
     }
 
-    const updatedPost = await prisma.post.update({
-      where: { id },
-      data: {
-        ...updateData,
-        ...(categories && {
-          categories: {
-            set: [],
-            connect: categories.map((id) => ({ id })),
-          },
-        }),
-      },
-      include: {
-        categories: true,
-      },
-    });
+    try {
+      const updatedPost = await prisma.post.update({
+        where: { id },
+        data: {
+          ...updateData,
+          ...(categories && {
+            categories: {
+              set: [],
+              connect: categories.map((id) => ({ id })),
+            },
+          }),
+        },
+        include: {
+          categories: true,
+        },
+      });
 
-    res.status(200).json({
-      success: true,
-      data: updatedPost,
-    });
+      res.status(200).json({
+        success: true,
+        data: updatedPost,
+      });
+    } catch (dbError) {
+      // Cleanup temp files if database operation fails
+      cleanupTempFiles(uploadedFiles);
+      throw new Error(`Database operation failed: ${dbError.message}`);
+    }
   } catch (error) {
+    // Final cleanup of temp files if they still exist
+    cleanupTempFiles(uploadedFiles);
     next(error);
   }
 };
@@ -473,15 +553,42 @@ export const deletePost = async (req, res, next) => {
       return next(error);
     }
 
+    // Delete associated media files from Digital Ocean Spaces
+    const deletePromises = [];
     if (post.mediaUrls && post.mediaUrls.length > 0) {
       for (const url of post.mediaUrls) {
         const key = getKeyFromUrl(url);
         if (key) {
-          await deleteFromSpaces(key);
+          deletePromises.push(
+            deleteFromSpaces(key).catch((error) => {
+              console.warn(
+                `Failed to delete media file ${key} from Digital Ocean Spaces:`,
+                error.message
+              );
+              // Don't throw error, just log warning as post should still be deleted from DB
+            })
+          );
+
+          // Also delete thumbnail if it exists
+          const thumbnailKey = key.replace(/^posts\//, "posts/thumbnails/");
+          if (thumbnailKey !== key) {
+            deletePromises.push(
+              deleteFromSpaces(thumbnailKey).catch((error) => {
+                console.warn(
+                  `Failed to delete thumbnail ${thumbnailKey}:`,
+                  error.message
+                );
+              })
+            );
+          }
         }
       }
     }
 
+    // Wait for all media deletions to complete (but don't fail if some fail)
+    await Promise.allSettled(deletePromises);
+
+    // Delete the post from database
     await prisma.post.delete({
       where: { id },
     });
@@ -583,6 +690,8 @@ export const unlikePost = async (req, res, next) => {
 };
 
 export const uploadMedia = async (req, res, next) => {
+  const uploadedFiles = req.files; // Store reference for cleanup
+
   try {
     const { id } = req.params;
     const files = req.files;
@@ -600,45 +709,88 @@ export const uploadMedia = async (req, res, next) => {
     if (!post) {
       const error = new Error("Post not found");
       error.statusCode = 404;
+      // Cleanup temp files before throwing error
+      cleanupTempFiles(uploadedFiles);
       return next(error);
     }
 
     if (post.userId !== req.user.id) {
       const error = new Error("Not authorized to update this post");
       error.statusCode = 403;
+      // Cleanup temp files before throwing error
+      cleanupTempFiles(uploadedFiles);
       return next(error);
     }
 
     const newMediaUrls = [];
     const newMediaTypes = [];
+    const uploadedKeys = []; // Track uploaded keys for rollback
 
-    for (const file of files) {
-      const quality = req.mediaQuality || "high";
+    try {
+      for (const file of files) {
+        const quality = req.mediaQuality || "high";
 
-      const result = await uploadToSpaces(file.path, "posts", {
-        quality,
-        userId: req.user.id,
-      });
-      newMediaUrls.push(result.url);
-      newMediaTypes.push(getMediaTypeFromFilename(file.originalname));
+        const result = await uploadToSpaces(file.path, "posts", {
+          quality,
+          userId: req.user.id,
+        });
+        newMediaUrls.push(result.url);
+        newMediaTypes.push(getMediaTypeFromFilename(file.originalname));
+        uploadedKeys.push(result.key);
+      }
+    } catch (uploadError) {
+      // If upload fails, cleanup both temp files and any uploaded files
+      cleanupTempFiles(uploadedFiles);
+
+      // Cleanup any successfully uploaded files
+      for (const key of uploadedKeys) {
+        try {
+          await deleteFromSpaces(key);
+        } catch (deleteError) {
+          console.warn(
+            `Failed to cleanup uploaded file ${key}:`,
+            deleteError.message
+          );
+        }
+      }
+
+      throw new Error(`File upload failed: ${uploadError.message}`);
     }
 
-    const updatedPost = await prisma.post.update({
-      where: { id },
-      data: {
-        mediaUrls: [...post.mediaUrls, ...newMediaUrls],
-        mediaType: [...post.mediaType, ...newMediaTypes],
-      },
-    });
+    try {
+      const updatedPost = await prisma.post.update({
+        where: { id },
+        data: {
+          mediaUrls: [...post.mediaUrls, ...newMediaUrls],
+          mediaType: [...post.mediaType, ...newMediaTypes],
+        },
+      });
 
-    res.status(200).json({
-      success: true,
-      data: {
-        mediaUrls: updatedPost.mediaUrls,
-        mediaType: updatedPost.mediaType,
-      },
-    });
+      res.status(200).json({
+        success: true,
+        data: {
+          mediaUrls: updatedPost.mediaUrls,
+          mediaType: updatedPost.mediaType,
+        },
+      });
+    } catch (dbError) {
+      // If database operation fails, cleanup uploaded files
+      for (const key of uploadedKeys) {
+        try {
+          await deleteFromSpaces(key);
+        } catch (deleteError) {
+          console.warn(
+            `Failed to cleanup uploaded file after DB error ${key}:`,
+            deleteError.message
+          );
+        }
+      }
+
+      throw new Error(`Database operation failed: ${dbError.message}`);
+    }
   } catch (error) {
+    // Final cleanup of temp files if they still exist
+    cleanupTempFiles(uploadedFiles);
     next(error);
   }
 };
@@ -672,9 +824,36 @@ export const deleteMedia = async (req, res, next) => {
 
     const mediaUrl = post.mediaUrls[mediaIndex];
     const key = getKeyFromUrl(mediaUrl);
+
+    // Delete from Digital Ocean Spaces (but don't fail if deletion fails)
+    const deletePromises = [];
     if (key) {
-      await deleteFromSpaces(key);
+      deletePromises.push(
+        deleteFromSpaces(key).catch((error) => {
+          console.warn(
+            `Failed to delete media file ${key} from Digital Ocean Spaces:`,
+            error.message
+          );
+          // Don't throw error, just log warning as post should still be updated in DB
+        })
+      );
+
+      // Also delete thumbnail if it exists
+      const thumbnailKey = key.replace(/^posts\//, "posts/thumbnails/");
+      if (thumbnailKey !== key) {
+        deletePromises.push(
+          deleteFromSpaces(thumbnailKey).catch((error) => {
+            console.warn(
+              `Failed to delete thumbnail ${thumbnailKey}:`,
+              error.message
+            );
+          })
+        );
+      }
     }
+
+    // Wait for all media deletions to complete (but don't fail if some fail)
+    await Promise.allSettled(deletePromises);
 
     const newMediaUrls = [...post.mediaUrls];
     const newMediaTypes = [...post.mediaType];

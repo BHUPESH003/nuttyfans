@@ -1,5 +1,59 @@
 import prisma from "../config/prisma.js";
 import { deleteFromSpaces } from "../services/digitalOceanService.js";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+/**
+ * Clean up temporary files from uploads/temp directory
+ * Removes files older than 1 hour
+ */
+export const cleanupTempFiles = async () => {
+  console.log("Running temp files cleanup task");
+
+  try {
+    const tempDir = path.join(__dirname, "../../public/uploads/temp");
+
+    if (!fs.existsSync(tempDir)) {
+      console.log("Temp directory does not exist, skipping cleanup");
+      return { deletedCount: 0, errorCount: 0 };
+    }
+
+    const files = fs.readdirSync(tempDir);
+    const oneHourAgo = new Date();
+    oneHourAgo.setHours(oneHourAgo.getHours() - 1);
+
+    let deletedCount = 0;
+    let errorCount = 0;
+
+    for (const file of files) {
+      try {
+        const filePath = path.join(tempDir, file);
+        const stats = fs.statSync(filePath);
+
+        if (stats.mtime < oneHourAgo) {
+          fs.unlinkSync(filePath);
+          deletedCount++;
+          console.log(`Deleted temp file: ${file}`);
+        }
+      } catch (error) {
+        console.error(`Error deleting temp file ${file}:`, error.message);
+        errorCount++;
+      }
+    }
+
+    console.log(
+      `Temp files cleanup completed. Deleted: ${deletedCount}, Errors: ${errorCount}`
+    );
+    return { deletedCount, errorCount };
+  } catch (error) {
+    console.error("Error in temp files cleanup task:", error);
+    return { error: error.message };
+  }
+};
 
 /**
  * Scheduled task to clean up orphaned media
@@ -74,8 +128,13 @@ export const findOrphanedS3Objects = async () => {
 
 export const initScheduledTasks = () => {
   const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+  const ONE_HOUR = 60 * 60 * 1000;
 
+  // Schedule orphaned media cleanup once per day
   setInterval(cleanupOrphanedMedia, TWENTY_FOUR_HOURS);
+
+  // Schedule temp files cleanup every hour
+  setInterval(cleanupTempFiles, ONE_HOUR);
 
   const now = new Date();
   const scheduledTime = new Date(
@@ -94,14 +153,20 @@ export const initScheduledTasks = () => {
 
   const timeUntilFirstRun = scheduledTime.getTime() - now.getTime();
 
+  // Schedule first orphaned media cleanup
   setTimeout(() => {
     cleanupOrphanedMedia();
     setInterval(cleanupOrphanedMedia, TWENTY_FOUR_HOURS);
   }, timeUntilFirstRun);
 
+  // Run temp files cleanup immediately and then every hour
+  cleanupTempFiles();
+
+  console.log(`Cleanup tasks scheduled:`);
   console.log(
-    `Media cleanup scheduled. First run in ${Math.round(
+    `- Media cleanup: First run in ${Math.round(
       timeUntilFirstRun / 1000 / 60
-    )} minutes`
+    )} minutes, then every 24 hours`
   );
+  console.log(`- Temp files cleanup: Running now, then every hour`);
 };

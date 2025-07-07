@@ -4,8 +4,38 @@ import {
   uploadToSpaces,
   getKeyFromUrl,
   deleteFromSpaces,
+  getMediaTypeFromFilename,
 } from "../services/digitalOceanService.js";
+import fs from "fs";
 
+// Helper function to cleanup temp files
+const cleanupTempFile = (filePath) => {
+  if (filePath) {
+    try {
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    } catch (error) {
+      console.warn(`Failed to cleanup temp file ${filePath}:`, error.message);
+    }
+  }
+};
+
+// Helper function to clean user data for response
+const cleanUserData = (user) => {
+  const {
+    password,
+    emailVerificationToken,
+    passwordResetToken,
+    otpToken,
+    twoFactorSecret,
+    backupCodes,
+    ...cleanUser
+  } = user;
+  return cleanUser;
+};
+
+// Get user profile by username
 export const getUserProfile = async (req, res, next) => {
   try {
     const { username } = req.params;
@@ -16,22 +46,59 @@ export const getUserProfile = async (req, res, next) => {
         id: true,
         username: true,
         fullName: true,
+        firstName: true,
+        lastName: true,
         bio: true,
         avatarUrl: true,
-        coverUrl: true,
+        coverImageUrl: true,
+        isOnline: true,
+        lastActiveAt: true,
         createdAt: true,
+        location: true,
+        website: true,
+        isPrivateProfile: true,
         profile: {
           select: {
             monthlyPrice: true,
             isVerified: true,
-            categories: true,
+            verificationLevel: true,
+            displayName: true,
+            profileImageUrl: true,
+            bannerImageUrl: true,
+            tagline: true,
+            about: true,
+            categories: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+              },
+            },
             socialLinks: true,
+            isAcceptingTips: true,
+            tipMinAmount: true,
+            contentRating: true,
+            subscriberCount: true,
+            postCount: true,
           },
         },
         _count: {
           select: {
-            posts: true,
-            subscribers: true,
+            posts: {
+              where: {
+                isArchived: false,
+              },
+            },
+            subscribers: {
+              where: {
+                status: "ACTIVE",
+                currentPeriodEnd: {
+                  gte: new Date(),
+                },
+              },
+            },
+            following: true,
+            followers: true,
           },
         },
       },
@@ -43,8 +110,42 @@ export const getUserProfile = async (req, res, next) => {
       return next(error);
     }
 
+    // Check if profile is private and user is not authenticated or not following
+    if (user.isPrivateProfile && (!req.user || req.user.id !== user.id)) {
+      let isFollowing = false;
+
+      if (req.user) {
+        const follow = await prisma.follow.findFirst({
+          where: {
+            followerId: req.user.id,
+            followingId: user.id,
+          },
+        });
+        isFollowing = !!follow;
+      }
+
+      if (!isFollowing) {
+        return res.status(200).json({
+          success: true,
+          data: {
+            id: user.id,
+            username: user.username,
+            fullName: user.fullName,
+            avatarUrl: user.avatarUrl,
+            isPrivateProfile: true,
+            _count: {
+              followers: user._count.followers,
+            },
+          },
+        });
+      }
+    }
+
     let isSubscribed = false;
-    if (req.user) {
+    let isFollowing = false;
+
+    if (req.user && req.user.id !== user.id) {
+      // Check subscription status
       const subscription = await prisma.subscription.findFirst({
         where: {
           subscriberId: req.user.id,
@@ -55,26 +156,40 @@ export const getUserProfile = async (req, res, next) => {
           },
         },
       });
-
       isSubscribed = !!subscription;
+
+      // Check following status
+      const follow = await prisma.follow.findFirst({
+        where: {
+          followerId: req.user.id,
+          followingId: user.id,
+        },
+      });
+      isFollowing = !!follow;
     }
 
+    // Get recent public posts
     const recentPosts = await prisma.post.findMany({
       where: {
         userId: user.id,
         isArchived: false,
-        isPremium: false,
+        OR: [
+          { isPremium: false },
+          ...(isSubscribed ? [{ isPremium: true }] : []),
+        ],
       },
       orderBy: {
         createdAt: "desc",
       },
-      take: 3,
+      take: 6,
       select: {
         id: true,
         title: true,
         content: true,
         mediaUrls: true,
         mediaType: true,
+        isPremium: true,
+        price: true,
         createdAt: true,
         _count: {
           select: {
@@ -90,7 +205,12 @@ export const getUserProfile = async (req, res, next) => {
       data: {
         ...user,
         isSubscribed,
+        isFollowing,
         recentPosts,
+        canViewFullProfile:
+          !user.isPrivateProfile ||
+          isFollowing ||
+          (req.user && req.user.id === user.id),
       },
     });
   } catch (error) {
@@ -98,16 +218,47 @@ export const getUserProfile = async (req, res, next) => {
   }
 };
 
+// Update user profile
 export const updateProfile = async (req, res, next) => {
   try {
-    const { fullName, bio, username, email, currentPassword, newPassword } =
-      req.body;
+    const {
+      fullName,
+      firstName,
+      lastName,
+      bio,
+      username,
+      email,
+      currentPassword,
+      newPassword,
+      location,
+      website,
+      dateOfBirth,
+      gender,
+      isPrivateProfile,
+      emailNotifications,
+      pushNotifications,
+    } = req.body;
 
     const updateData = {};
 
+    // Basic profile fields
     if (fullName !== undefined) updateData.fullName = fullName;
+    if (firstName !== undefined) updateData.firstName = firstName;
+    if (lastName !== undefined) updateData.lastName = lastName;
     if (bio !== undefined) updateData.bio = bio;
+    if (location !== undefined) updateData.location = location;
+    if (website !== undefined) updateData.website = website;
+    if (dateOfBirth !== undefined)
+      updateData.dateOfBirth = dateOfBirth ? new Date(dateOfBirth) : null;
+    if (gender !== undefined) updateData.gender = gender;
+    if (isPrivateProfile !== undefined)
+      updateData.isPrivateProfile = isPrivateProfile;
+    if (emailNotifications !== undefined)
+      updateData.emailNotifications = emailNotifications;
+    if (pushNotifications !== undefined)
+      updateData.pushNotifications = pushNotifications;
 
+    // Check username availability
     if (username !== undefined && username !== req.user.username) {
       const usernameExists = await prisma.user.findUnique({
         where: { username },
@@ -122,6 +273,7 @@ export const updateProfile = async (req, res, next) => {
       updateData.username = username;
     }
 
+    // Check email availability
     if (email !== undefined && email !== req.user.email) {
       const emailExists = await prisma.user.findUnique({
         where: { email },
@@ -134,12 +286,22 @@ export const updateProfile = async (req, res, next) => {
       }
 
       updateData.email = email;
+      updateData.isEmailVerified = false; // Require re-verification for new email
     }
 
+    // Handle password change
     if (newPassword && currentPassword) {
       const user = await prisma.user.findUnique({
         where: { id: req.user.id },
       });
+
+      if (!user.password) {
+        const error = new Error(
+          "Account uses OAuth login. Cannot set password."
+        );
+        error.statusCode = 400;
+        return next(error);
+      }
 
       const isMatch = await bcrypt.compare(currentPassword, user.password);
 
@@ -149,60 +311,55 @@ export const updateProfile = async (req, res, next) => {
         return next(error);
       }
 
-      const salt = await bcrypt.genSalt(10);
-      const hashedPassword = await bcrypt.hash(newPassword, salt);
+      if (newPassword.length < 8) {
+        const error = new Error(
+          "New password must be at least 8 characters long"
+        );
+        error.statusCode = 400;
+        return next(error);
+      }
 
+      const salt = await bcrypt.genSalt(12);
+      const hashedPassword = await bcrypt.hash(newPassword, salt);
       updateData.password = hashedPassword;
+
+      // Create security notification
+      await prisma.notification.create({
+        data: {
+          userId: req.user.id,
+          type: "PASSWORD_CHANGED",
+          title: "Password Changed",
+          content: "Your password has been successfully changed.",
+        },
+      });
     }
 
     const updatedUser = await prisma.user.update({
       where: { id: req.user.id },
       data: updateData,
-    });
-
-    const { password, ...userWithoutPassword } = updatedUser;
-
-    res.status(200).json({
-      success: true,
-      data: userWithoutPassword,
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const uploadAvatar = async (req, res, next) => {
-  try {
-    if (!req.file) {
-      const error = new Error("Please upload an image");
-      error.statusCode = 400;
-      return next(error);
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { id: req.user.id },
-    });
-
-    if (user.avatarUrl) {
-      const key = getKeyFromUrl(user.avatarUrl);
-      if (key) {
-        await deleteFromSpaces(key);
-      }
-    }
-
-    const result = await uploadToSpaces(req.file.path, "avatars", {
-      userId: req.user.id,
-    });
-
-    const updatedUser = await prisma.user.update({
-      where: { id: req.user.id },
-      data: { avatarUrl: result.url },
+      include: {
+        profile: {
+          include: {
+            categories: true,
+          },
+        },
+        _count: {
+          select: {
+            posts: true,
+            subscribers: true,
+            subscriptions: true,
+            followers: true,
+            following: true,
+          },
+        },
+      },
     });
 
     res.status(200).json({
       success: true,
+      message: "Profile updated successfully",
       data: {
-        avatarUrl: updatedUser.avatarUrl,
+        user: cleanUserData(updatedUser),
       },
     });
   } catch (error) {
@@ -210,10 +367,39 @@ export const uploadAvatar = async (req, res, next) => {
   }
 };
 
-export const uploadCover = async (req, res, next) => {
+// Upload avatar
+export const uploadAvatar = async (req, res, next) => {
+  const uploadedFile = req.file;
+
   try {
     if (!req.file) {
       const error = new Error("Please upload an image");
+      error.statusCode = 400;
+      return next(error);
+    }
+
+    // Validate file type
+    const allowedTypes = [
+      "image/jpeg",
+      "image/jpg",
+      "image/png",
+      "image/gif",
+      "image/webp",
+    ];
+    if (!allowedTypes.includes(req.file.mimetype)) {
+      cleanupTempFile(uploadedFile?.path);
+      const error = new Error(
+        "Invalid file type. Only JPEG, PNG, GIF, and WebP images are allowed"
+      );
+      error.statusCode = 400;
+      return next(error);
+    }
+
+    // Validate file size (5MB max)
+    const maxSize = 5 * 1024 * 1024; // 5MB
+    if (req.file.size > maxSize) {
+      cleanupTempFile(uploadedFile?.path);
+      const error = new Error("File too large. Maximum size is 5MB");
       error.statusCode = 400;
       return next(error);
     }
@@ -222,26 +408,422 @@ export const uploadCover = async (req, res, next) => {
       where: { id: req.user.id },
     });
 
-    if (user.coverUrl) {
-      const key = getKeyFromUrl(user.coverUrl);
-      if (key) {
-        await deleteFromSpaces(key);
+    let uploadResult;
+    try {
+      // Upload new avatar
+      uploadResult = await uploadToSpaces(req.file.path, "avatars", {
+        userId: req.user.id,
+        quality: "high",
+      });
+    } catch (uploadError) {
+      cleanupTempFile(uploadedFile?.path);
+      throw new Error(`Avatar upload failed: ${uploadError.message}`);
+    }
+
+    // Delete old avatar if exists
+    if (
+      user.avatarUrl &&
+      !user.avatarUrl.includes("google") &&
+      !user.avatarUrl.includes("facebook")
+    ) {
+      const oldKey = getKeyFromUrl(user.avatarUrl);
+      if (oldKey) {
+        try {
+          await deleteFromSpaces(oldKey);
+        } catch (deleteError) {
+          console.warn(
+            `Failed to delete old avatar ${oldKey}:`,
+            deleteError.message
+          );
+        }
       }
     }
 
-    const result = await uploadToSpaces(req.file.path, "covers", {
-      userId: req.user.id,
-    });
-
+    // Update user avatar URL
     const updatedUser = await prisma.user.update({
       where: { id: req.user.id },
-      data: { coverUrl: result.url },
+      data: {
+        avatarUrl: uploadResult.url,
+      },
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "Avatar uploaded successfully",
+      data: {
+        avatarUrl: updatedUser.avatarUrl,
+      },
+    });
+  } catch (error) {
+    cleanupTempFile(uploadedFile?.path);
+    next(error);
+  }
+};
+
+// Upload cover image
+export const uploadCoverImage = async (req, res, next) => {
+  const uploadedFile = req.file;
+
+  try {
+    if (!req.file) {
+      const error = new Error("Please upload an image");
+      error.statusCode = 400;
+      return next(error);
+    }
+
+    // Validate file type
+    const allowedTypes = [
+      "image/jpeg",
+      "image/jpg",
+      "image/png",
+      "image/gif",
+      "image/webp",
+    ];
+    if (!allowedTypes.includes(req.file.mimetype)) {
+      cleanupTempFile(uploadedFile?.path);
+      const error = new Error(
+        "Invalid file type. Only JPEG, PNG, GIF, and WebP images are allowed"
+      );
+      error.statusCode = 400;
+      return next(error);
+    }
+
+    // Validate file size (10MB max for cover)
+    const maxSize = 10 * 1024 * 1024; // 10MB
+    if (req.file.size > maxSize) {
+      cleanupTempFile(uploadedFile?.path);
+      const error = new Error("File too large. Maximum size is 10MB");
+      error.statusCode = 400;
+      return next(error);
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+    });
+
+    let uploadResult;
+    try {
+      // Upload new cover image
+      uploadResult = await uploadToSpaces(req.file.path, "covers", {
+        userId: req.user.id,
+        quality: "high",
+      });
+    } catch (uploadError) {
+      cleanupTempFile(uploadedFile?.path);
+      throw new Error(`Cover image upload failed: ${uploadError.message}`);
+    }
+
+    // Delete old cover image if exists
+    if (user.coverImageUrl) {
+      const oldKey = getKeyFromUrl(user.coverImageUrl);
+      if (oldKey) {
+        try {
+          await deleteFromSpaces(oldKey);
+        } catch (deleteError) {
+          console.warn(
+            `Failed to delete old cover image ${oldKey}:`,
+            deleteError.message
+          );
+        }
+      }
+    }
+
+    // Update user cover image URL
+    const updatedUser = await prisma.user.update({
+      where: { id: req.user.id },
+      data: {
+        coverImageUrl: uploadResult.url,
+      },
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "Cover image uploaded successfully",
+      data: {
+        coverImageUrl: updatedUser.coverImageUrl,
+      },
+    });
+  } catch (error) {
+    cleanupTempFile(uploadedFile?.path);
+    next(error);
+  }
+};
+
+// Delete avatar
+export const deleteAvatar = async (req, res, next) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+    });
+
+    if (!user.avatarUrl) {
+      const error = new Error("No avatar to delete");
+      error.statusCode = 400;
+      return next(error);
+    }
+
+    // Don't delete OAuth avatars
+    if (
+      user.avatarUrl.includes("google") ||
+      user.avatarUrl.includes("facebook")
+    ) {
+      const error = new Error("Cannot delete OAuth avatar");
+      error.statusCode = 400;
+      return next(error);
+    }
+
+    // Delete from storage
+    const key = getKeyFromUrl(user.avatarUrl);
+    if (key) {
+      try {
+        await deleteFromSpaces(key);
+      } catch (deleteError) {
+        console.warn(`Failed to delete avatar ${key}:`, deleteError.message);
+      }
+    }
+
+    // Update user
+    await prisma.user.update({
+      where: { id: req.user.id },
+      data: {
+        avatarUrl: null,
+      },
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "Avatar deleted successfully",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Delete cover image
+export const deleteCoverImage = async (req, res, next) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+    });
+
+    if (!user.coverImageUrl) {
+      const error = new Error("No cover image to delete");
+      error.statusCode = 400;
+      return next(error);
+    }
+
+    // Delete from storage
+    const key = getKeyFromUrl(user.coverImageUrl);
+    if (key) {
+      try {
+        await deleteFromSpaces(key);
+      } catch (deleteError) {
+        console.warn(
+          `Failed to delete cover image ${key}:`,
+          deleteError.message
+        );
+      }
+    }
+
+    // Update user
+    await prisma.user.update({
+      where: { id: req.user.id },
+      data: {
+        coverImageUrl: null,
+      },
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "Cover image deleted successfully",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Follow user
+export const followUser = async (req, res, next) => {
+  try {
+    const { userId } = req.params;
+
+    if (userId === req.user.id) {
+      const error = new Error("You cannot follow yourself");
+      error.statusCode = 400;
+      return next(error);
+    }
+
+    // Check if user exists
+    const userToFollow = await prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!userToFollow) {
+      const error = new Error("User not found");
+      error.statusCode = 404;
+      return next(error);
+    }
+
+    // Check if already following
+    const existingFollow = await prisma.follow.findFirst({
+      where: {
+        followerId: req.user.id,
+        followingId: userId,
+      },
+    });
+
+    if (existingFollow) {
+      return res.status(200).json({
+        success: true,
+        message: "Already following this user",
+      });
+    }
+
+    // Create follow relationship
+    await prisma.follow.create({
+      data: {
+        followerId: req.user.id,
+        followingId: userId,
+      },
+    });
+
+    // Create notification
+    await prisma.notification.create({
+      data: {
+        userId: userId,
+        type: "NEW_FOLLOWER",
+        title: "New Follower",
+        content: `${req.user.username} started following you`,
+        relatedId: req.user.id,
+        relatedType: "User",
+      },
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "User followed successfully",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Unfollow user
+export const unfollowUser = async (req, res, next) => {
+  try {
+    const { userId } = req.params;
+
+    await prisma.follow.deleteMany({
+      where: {
+        followerId: req.user.id,
+        followingId: userId,
+      },
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "User unfollowed successfully",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Get user followers
+export const getUserFollowers = async (req, res, next) => {
+  try {
+    const { userId } = req.params;
+    const { page = 1, limit = 20 } = req.query;
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const followers = await prisma.follow.findMany({
+      where: { followingId: userId },
+      skip,
+      take: parseInt(limit),
+      include: {
+        follower: {
+          select: {
+            id: true,
+            username: true,
+            fullName: true,
+            avatarUrl: true,
+            isOnline: true,
+            profile: {
+              select: {
+                isVerified: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    const totalCount = await prisma.follow.count({
+      where: { followingId: userId },
     });
 
     res.status(200).json({
       success: true,
       data: {
-        coverUrl: updatedUser.coverUrl,
+        followers: followers.map((f) => f.follower),
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          totalCount,
+          totalPages: Math.ceil(totalCount / parseInt(limit)),
+        },
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Get user following
+export const getUserFollowing = async (req, res, next) => {
+  try {
+    const { userId } = req.params;
+    const { page = 1, limit = 20 } = req.query;
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const following = await prisma.follow.findMany({
+      where: { followerId: userId },
+      skip,
+      take: parseInt(limit),
+      include: {
+        following: {
+          select: {
+            id: true,
+            username: true,
+            fullName: true,
+            avatarUrl: true,
+            isOnline: true,
+            profile: {
+              select: {
+                isVerified: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    const totalCount = await prisma.follow.count({
+      where: { followerId: userId },
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        following: following.map((f) => f.following),
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          totalCount,
+          totalPages: Math.ceil(totalCount / parseInt(limit)),
+        },
       },
     });
   } catch (error) {

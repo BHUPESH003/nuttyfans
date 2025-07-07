@@ -11,17 +11,25 @@ datasource db {
 }
 
 model User {
-  id              String   @id @default(uuid())
-  email           String   @unique
-  username        String   @unique
-  password        String
-  fullName        String?
-  bio             String?
-  avatarUrl       String?
-  coverUrl        String?
-  role            UserRole @default(USER)
-  isEmailVerified Boolean  @default(false)
-  isActive        Boolean  @default(true)
+  id        String  @id @default(uuid())
+  email     String  @unique
+  username  String  @unique
+  password  String? // Optional for OAuth users
+  fullName  String?
+  firstName String? // Added for better name handling
+  lastName  String? // Added for better name handling
+  bio       String?
+
+  // Image fields - consistent naming
+  avatarUrl     String? // Profile picture
+  coverImageUrl String? // Cover/banner image
+
+  // Enhanced authentication fields
+  role            UserRole  @default(USER)
+  isEmailVerified Boolean   @default(false)
+  isActive        Boolean   @default(true)
+  isOnline        Boolean   @default(false)
+  lastActiveAt    DateTime?
 
   // Email verification
   emailVerificationToken   String?
@@ -30,6 +38,38 @@ model User {
   // Password reset
   passwordResetToken   String?
   passwordResetExpires DateTime?
+
+  // OTP Authentication (Passwordless)
+  otpToken    String?
+  otpExpires  DateTime?
+  otpAttempts Int       @default(0)
+
+  // Google OAuth enhanced
+  googleId        String? @unique
+  googleEmail     String?
+  googleAvatarUrl String?
+
+  // Additional OAuth providers (future)
+  facebookId String? @unique
+  twitterId  String? @unique
+
+  // Profile enhancement
+  dateOfBirth DateTime?
+  gender      Gender?
+  location    String?
+  website     String?
+  timezone    String?
+  language    String    @default("en")
+
+  // Security
+  twoFactorEnabled Boolean  @default(false)
+  twoFactorSecret  String?
+  backupCodes      String[]
+
+  // Privacy settings
+  isPrivateProfile   Boolean @default(false)
+  emailNotifications Boolean @default(true)
+  pushNotifications  Boolean @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -50,50 +90,137 @@ model User {
   // Square Payment Integration
   squareCustomerId String?
 
-  // Google OAuth
-  googleId String?
-
   walletTransactions WalletTransaction[]
   Media              Media[]
   bookmarks          Bookmark[]
 
+  // Social interactions
+  following Follow[] @relation("Follower")
+  followers Follow[] @relation("Following")
+
   @@index([email, username])
   @@index([emailVerificationToken])
   @@index([passwordResetToken])
+  @@index([otpToken])
+  @@index([googleId])
+  @@index([isActive, isEmailVerified])
 }
 
 enum UserRole {
   USER
   CREATOR
   ADMIN
+  MODERATOR
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+  PREFER_NOT_TO_SAY
 }
 
 model CreatorProfile {
-  id           String @id @default(uuid())
-  userId       String @unique
-  user         User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id     String @id @default(uuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Pricing
   monthlyPrice Float
+
+  // Enhanced profile fields
+  displayName     String? // Different from username
+  profileImageUrl String? // Creator-specific profile image
+  bannerImageUrl  String? // Creator banner
+
+  // Creator verification and status
+  isVerified        Boolean           @default(false)
+  verificationLevel VerificationLevel @default(NONE)
+  verifiedAt        DateTime?
+
+  // Creator content and branding
+  tagline        String? // Short description
+  about          String? // Detailed about section
+  featuredPostId String?
+
+  // Social media links - enhanced
+  socialLinks Json? // {twitter: "url", instagram: "url", etc.}
+
+  // Creator settings
+  customWelcomeMessage String?
+  isAcceptingTips      Boolean @default(true)
+  tipMinAmount         Float   @default(5.0)
+
+  // Content settings
+  contentRating   ContentRating @default(ALL_AGES)
+  allowComments   Boolean       @default(true)
+  requireApproval Boolean       @default(false)
+
+  // Analytics and metrics
+  totalEarnings   Float @default(0)
+  subscriberCount Int   @default(0)
+  postCount       Int   @default(0)
 
   // Square Payment Integration
   squareAccountId  String?
   squareLocationId String?
 
-  categories     Category[]
-  isVerified     Boolean    @default(false)
-  featuredPostId String?
-  socialLinks    Json? // {twitter: "url", instagram: "url", etc.}
-  createdAt      DateTime   @default(now())
-  updatedAt      DateTime   @updatedAt
+  // Creator specific media
+  portfolioImages String[] // Array of portfolio image URLs
+
+  categories Category[]
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
 
   @@index([userId])
+  @@index([isVerified, verificationLevel])
+  @@index([monthlyPrice])
+}
+
+enum VerificationLevel {
+  NONE
+  EMAIL_VERIFIED
+  PHONE_VERIFIED
+  ID_VERIFIED
+  BUSINESS_VERIFIED
+}
+
+enum ContentRating {
+  ALL_AGES
+  TEEN
+  MATURE
+  ADULT
+}
+
+// New model for social following
+model Follow {
+  id          String   @id @default(uuid())
+  followerId  String
+  follower    User     @relation("Follower", fields: [followerId], references: [id], onDelete: Cascade)
+  followingId String
+  following   User     @relation("Following", fields: [followingId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+
+  @@unique([followerId, followingId])
+  @@index([followerId])
+  @@index([followingId])
 }
 
 model Category {
   id              String           @id @default(uuid())
   name            String           @unique
   slug            String           @unique
+  description     String?
+  imageUrl        String? // Category image
+  isActive        Boolean          @default(true)
+  sortOrder       Int              @default(0)
   creatorProfiles CreatorProfile[]
   posts           Post[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([slug, isActive])
 }
 
 model Subscription {
@@ -104,18 +231,41 @@ model Subscription {
   creator      User      @relation("creator", fields: [creatorId], references: [id], onDelete: Cascade)
   status       SubStatus @default(ACTIVE)
 
+  // Enhanced subscription details
+  planType SubscriptionPlan @default(MONTHLY)
+  amount   Float
+
   // Square Payment Integration
   squareSubscriptionId String?
   squarePaymentId      String?
 
+  // Subscription periods
   currentPeriodStart DateTime
   currentPeriodEnd   DateTime
   cancelAtPeriodEnd  Boolean  @default(false)
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+
+  // Trial and discounts
+  trialStart      DateTime?
+  trialEnd        DateTime?
+  discountPercent Float? // Discount percentage
+
+  // Subscription metadata
+  autoRenew    Boolean @default(true)
+  renewalCount Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([subscriberId, creatorId])
   @@index([subscriberId, creatorId, status])
+  @@index([status, currentPeriodEnd])
+}
+
+enum SubscriptionPlan {
+  MONTHLY
+  QUARTERLY
+  YEARLY
+  LIFETIME
 }
 
 enum SubStatus {
@@ -244,14 +394,40 @@ model Notification {
 }
 
 enum NotificationType {
+  // Authentication related
+  WELCOME
+  EMAIL_VERIFIED
+  PASSWORD_CHANGED
+  SECURITY_ALERT
+
+  // Social interactions
+  NEW_FOLLOWER
   NEW_SUBSCRIBER
   NEW_COMMENT
+  NEW_LIKE
   NEW_MESSAGE
+
+  // Content related
+  NEW_CONTENT
+  CONTENT_APPROVED
+  CONTENT_REJECTED
+
+  // Financial
   NEW_PURCHASE
   SUBSCRIPTION_EXPIRING
   PAYMENT_SUCCESS
   PAYMENT_FAILED
+  PAYOUT_PROCESSED
+
+  // Creator related
+  VERIFICATION_APPROVED
+  VERIFICATION_REJECTED
+  CREATOR_MILESTONE
+
+  // System
   SYSTEM
+  MAINTENANCE
+  FEATURE_UPDATE
 }
 
 model PaymentMethod {

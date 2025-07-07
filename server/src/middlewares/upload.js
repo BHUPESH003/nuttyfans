@@ -75,6 +75,34 @@ export const uploadMultiple = (fieldName, maxCount = 5) => {
 
 export const handleUploadError = (req, res, next) => {
   if (req.fileError) {
+    // Cleanup any uploaded temp files if there was an error
+    const cleanupFiles = (files) => {
+      if (files) {
+        const fileArray = Array.isArray(files) ? files : [files];
+        fileArray.forEach((file) => {
+          if (file && file.path) {
+            try {
+              if (fs.existsSync(file.path)) {
+                fs.unlinkSync(file.path);
+                console.log(
+                  `Cleaned up temp file after upload error: ${file.path}`
+                );
+              }
+            } catch (cleanupError) {
+              console.warn(
+                `Failed to cleanup temp file ${file.path}:`,
+                cleanupError.message
+              );
+            }
+          }
+        });
+      }
+    };
+
+    // Cleanup uploaded files
+    cleanupFiles(req.file);
+    cleanupFiles(req.files);
+
     const error = new Error(req.fileError.message);
     error.statusCode = 400;
     return next(error);

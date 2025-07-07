@@ -8,6 +8,38 @@ import {
   updateFile,
 } from "../services/digitalOceanService.js";
 import prisma from "../config/prisma.js";
+import fs from "fs";
+
+// Helper function to cleanup temp files
+const cleanupTempFiles = (files) => {
+  if (files && files.length > 0) {
+    files.forEach((file) => {
+      try {
+        if (fs.existsSync(file.path)) {
+          fs.unlinkSync(file.path);
+        }
+      } catch (error) {
+        console.warn(
+          `Failed to cleanup temp file ${file.path}:`,
+          error.message
+        );
+      }
+    });
+  }
+};
+
+// Helper function to cleanup single temp file
+const cleanupTempFile = (filePath) => {
+  if (filePath) {
+    try {
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    } catch (error) {
+      console.warn(`Failed to cleanup temp file ${filePath}:`, error.message);
+    }
+  }
+};
 
 export const getPresignedUrl = async (req, res, next) => {
   try {
@@ -120,6 +152,8 @@ export const confirmMediaUpload = async (req, res, next) => {
 };
 
 export const uploadMedia = async (req, res, next) => {
+  const uploadedFile = req.file; // Store reference for cleanup
+
   try {
     if (!req.file) {
       const error = new Error("No file uploaded");
@@ -132,46 +166,75 @@ export const uploadMedia = async (req, res, next) => {
     if (!folder) {
       const error = new Error("Folder parameter is required");
       error.statusCode = 400;
+      // Cleanup temp file before throwing error
+      cleanupTempFile(uploadedFile?.path);
       return next(error);
     }
 
     const quality = req.mediaQuality || "high";
     const generateThumbnail = req.body.generateThumbnail === "true";
 
-    const result = await uploadToSpaces(req.file.path, folder, {
-      quality,
-      userId: req.user.id,
-      generateThumbnail,
-    });
-
-    const media = await prisma.media.create({
-      data: {
-        key: result.key,
-        url: result.url,
-        fileName: req.file.originalname,
-        contentType: result.contentType,
-        mediaType: getMediaTypeFromFilename(req.file.originalname),
-        uploadStatus: "COMPLETED",
+    let uploadResult;
+    try {
+      uploadResult = await uploadToSpaces(req.file.path, folder, {
+        quality,
         userId: req.user.id,
-        folder: folder,
-        metadata: {
-          size: req.file.size,
-          quality,
-          hasThumbnail: generateThumbnail,
-        },
-      },
-    });
+        generateThumbnail,
+      });
+    } catch (uploadError) {
+      // Cleanup temp file if upload fails
+      cleanupTempFile(uploadedFile?.path);
+      throw new Error(`File upload failed: ${uploadError.message}`);
+    }
 
-    res.status(201).json({
-      success: true,
-      data: media,
-    });
+    try {
+      const media = await prisma.media.create({
+        data: {
+          key: uploadResult.key,
+          url: uploadResult.url,
+          fileName: req.file.originalname,
+          contentType: uploadResult.contentType,
+          mediaType: getMediaTypeFromFilename(req.file.originalname),
+          uploadStatus: "COMPLETED",
+          userId: req.user.id,
+          folder: folder,
+          metadata: {
+            size: req.file.size,
+            quality,
+            hasThumbnail: generateThumbnail,
+          },
+        },
+      });
+
+      res.status(201).json({
+        success: true,
+        data: media,
+      });
+    } catch (dbError) {
+      // If database operation fails, cleanup uploaded file from Digital Ocean
+      if (uploadResult?.key) {
+        try {
+          await deleteFromSpaces(uploadResult.key);
+        } catch (deleteError) {
+          console.warn(
+            `Failed to cleanup uploaded file after DB error ${uploadResult.key}:`,
+            deleteError.message
+          );
+        }
+      }
+
+      throw new Error(`Database operation failed: ${dbError.message}`);
+    }
   } catch (error) {
+    // Final cleanup of temp file if it still exists
+    cleanupTempFile(uploadedFile?.path);
     next(error);
   }
 };
 
 export const updateMedia = async (req, res, next) => {
+  const uploadedFile = req.file; // Store reference for cleanup
+
   try {
     const { mediaId } = req.params;
 
@@ -185,6 +248,8 @@ export const updateMedia = async (req, res, next) => {
     if (!media) {
       const error = new Error("Media not found");
       error.statusCode = 404;
+      // Cleanup temp file before throwing error
+      cleanupTempFile(uploadedFile?.path);
       return next(error);
     }
 
@@ -197,36 +262,64 @@ export const updateMedia = async (req, res, next) => {
     const quality = req.mediaQuality || "high";
     const generateThumbnail = req.body.generateThumbnail === "true";
 
-    const result = await updateFile(media.key, req.file.path, media.folder, {
-      quality,
-      generateThumbnail,
-    });
+    let updateResult;
+    try {
+      updateResult = await updateFile(media.key, req.file.path, media.folder, {
+        quality,
+        generateThumbnail,
+      });
+    } catch (uploadError) {
+      // Cleanup temp file if upload fails
+      cleanupTempFile(uploadedFile?.path);
+      throw new Error(`File update failed: ${uploadError.message}`);
+    }
 
-    const updatedMedia = await prisma.media.update({
-      where: { id: mediaId },
-      data: {
-        key: result.key,
-        url: result.url,
-        fileName: req.file.originalname,
-        contentType: result.contentType,
-        mediaType: getMediaTypeFromFilename(req.file.originalname),
-        uploadStatus: "COMPLETED",
-        metadata: {
-          ...media.metadata,
-          size: req.file.size,
-          quality,
-          hasThumbnail: generateThumbnail,
-          updatedAt: new Date().toISOString(),
+    try {
+      const updatedMedia = await prisma.media.update({
+        where: { id: mediaId },
+        data: {
+          key: updateResult.key,
+          url: updateResult.url,
+          fileName: req.file.originalname,
+          contentType: updateResult.contentType,
+          mediaType: getMediaTypeFromFilename(req.file.originalname),
+          uploadStatus: "COMPLETED",
+          metadata: {
+            ...media.metadata,
+            size: req.file.size,
+            quality,
+            hasThumbnail: generateThumbnail,
+            updatedAt: new Date().toISOString(),
+          },
         },
-      },
-    });
+      });
 
-    res.status(200).json({
-      success: true,
-      data: updatedMedia,
-      message: "Media updated successfully",
-    });
+      res.status(200).json({
+        success: true,
+        data: updatedMedia,
+        message: "Media updated successfully",
+      });
+    } catch (dbError) {
+      // If database operation fails, try to restore old file (but don't fail if it doesn't work)
+      if (updateResult?.key && media.key !== updateResult.key) {
+        try {
+          await deleteFromSpaces(updateResult.key);
+          console.warn(
+            `Cleaned up new uploaded file ${updateResult.key} after database error`
+          );
+        } catch (deleteError) {
+          console.warn(
+            `Failed to cleanup new uploaded file after DB error ${updateResult.key}:`,
+            deleteError.message
+          );
+        }
+      }
+
+      throw new Error(`Database operation failed: ${dbError.message}`);
+    }
   } catch (error) {
+    // Final cleanup of temp file if it still exists
+    cleanupTempFile(uploadedFile?.path);
     next(error);
   }
 };
@@ -248,14 +341,37 @@ export const deleteMedia = async (req, res, next) => {
       return next(error);
     }
 
-    try {
-      await deleteFromSpaces(media.key);
-    } catch (deleteError) {
-      console.error(
-        `Error deleting media from storage: ${deleteError.message}`
+    // Delete from Digital Ocean Spaces (but don't fail if deletion fails)
+    const deletePromises = [];
+    if (media.key) {
+      deletePromises.push(
+        deleteFromSpaces(media.key).catch((error) => {
+          console.warn(
+            `Failed to delete media file ${media.key} from Digital Ocean Spaces:`,
+            error.message
+          );
+          // Don't throw error, just log warning as media should still be deleted from DB
+        })
       );
+
+      // Also delete thumbnail if it exists
+      const thumbnailKey = media.key.replace(/^([^\/]+)\//, "$1/thumbnails/");
+      if (thumbnailKey !== media.key) {
+        deletePromises.push(
+          deleteFromSpaces(thumbnailKey).catch((error) => {
+            console.warn(
+              `Failed to delete thumbnail ${thumbnailKey}:`,
+              error.message
+            );
+          })
+        );
+      }
     }
 
+    // Wait for all media deletions to complete (but don't fail if some fail)
+    await Promise.allSettled(deletePromises);
+
+    // Delete from database
     await prisma.media.delete({
       where: { id: mediaId },
     });
