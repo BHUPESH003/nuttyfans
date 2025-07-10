@@ -7,6 +7,8 @@ import { Server } from "socket.io";
 import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
+import swaggerUi from "swagger-ui-express";
+import specs from "./config/swagger.js";
 
 // Routes
 import authRoutes from "./routes/auth.js";
@@ -45,6 +47,17 @@ app.use(morgan("dev"));
 
 // Serve static files
 app.use("/uploads", express.static(path.join(__dirname, "../public/uploads")));
+
+// API Documentation
+app.use(
+  "/docs",
+  swaggerUi.serve,
+  swaggerUi.setup(specs, {
+    explorer: true,
+    customCss: ".swagger-ui .topbar { display: none }",
+    customSiteTitle: "NuttyFans API Documentation",
+  })
+);
 
 // API Routes
 app.use("/api/auth", authRoutes);

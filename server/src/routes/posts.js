@@ -26,12 +26,134 @@ import {
 
 const router = express.Router();
 
+/**
+ * @swagger
+ * tags:
+ *   name: Posts
+ *   description: Post management, likes, bookmarks, and comments
+ */
+
 // Base route: /api/posts
 
-// Bookmarks routes (should be before parameterized routes)
+/**
+ * @swagger
+ * /api/posts/bookmarks:
+ *   get:
+ *     summary: Get user's bookmarked posts
+ *     tags: [Posts]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *         description: Page number for pagination
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *         description: Number of posts per page
+ *     responses:
+ *       200:
+ *         description: Bookmarked posts retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 posts:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/Post'
+ *                 pagination:
+ *                   type: object
+ *                   properties:
+ *                     page:
+ *                       type: number
+ *                     limit:
+ *                       type: number
+ *                     total:
+ *                       type: number
+ *                     pages:
+ *                       type: number
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 router.get("/bookmarks", protect, getBookmarkedPosts);
 
-// Post CRUD routes
+/**
+ * @swagger
+ * /api/posts:
+ *   post:
+ *     summary: Create a new post
+ *     tags: [Posts]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - title
+ *               - content
+ *             properties:
+ *               title:
+ *                 type: string
+ *                 example: "My First Post"
+ *               content:
+ *                 type: string
+ *                 example: "This is the content of my post"
+ *               description:
+ *                 type: string
+ *                 example: "Brief description of the post"
+ *               price:
+ *                 type: number
+ *                 example: 9.99
+ *                 description: "Price for premium content"
+ *               isPremium:
+ *                 type: boolean
+ *                 example: false
+ *               files:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                   format: binary
+ *                 description: "Media files (max 5)"
+ *     responses:
+ *       201:
+ *         description: Post created successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                   example: "Post created successfully"
+ *                 post:
+ *                   $ref: '#/components/schemas/Post'
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 router.post(
   "/",
   protect,

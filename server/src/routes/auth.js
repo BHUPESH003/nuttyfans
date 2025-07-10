@@ -35,20 +35,280 @@ import {
 
 const router = express.Router();
 
+/**
+ * @swagger
+ * tags:
+ *   name: Authentication
+ *   description: User authentication and authorization endpoints
+ */
+
 // ==========================================
 // PUBLIC ROUTES (No Authentication Required)
 // ==========================================
 
-// Registration and Login
+/**
+ * @swagger
+ * /api/auth/register:
+ *   post:
+ *     summary: Register a new user account
+ *     tags: [Authentication]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - username
+ *               - email
+ *               - password
+ *             properties:
+ *               username:
+ *                 type: string
+ *                 example: "john_doe"
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 example: "john@example.com"
+ *               password:
+ *                 type: string
+ *                 minLength: 6
+ *                 example: "password123"
+ *               displayName:
+ *                 type: string
+ *                 example: "John Doe"
+ *     responses:
+ *       201:
+ *         description: User registered successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                   example: "User registered successfully"
+ *                 user:
+ *                   $ref: '#/components/schemas/User'
+ *                 token:
+ *                   type: string
+ *                   example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       409:
+ *         description: User already exists
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 router.post("/register", validate(registerSchema), register);
+
+/**
+ * @swagger
+ * /api/auth/login:
+ *   post:
+ *     summary: User login with email/username and password
+ *     tags: [Authentication]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - identifier
+ *               - password
+ *             properties:
+ *               identifier:
+ *                 type: string
+ *                 description: Email address or username
+ *                 example: "john@example.com"
+ *               password:
+ *                 type: string
+ *                 example: "password123"
+ *     responses:
+ *       200:
+ *         description: Login successful
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                   example: "Login successful"
+ *                 user:
+ *                   $ref: '#/components/schemas/User'
+ *                 token:
+ *                   type: string
+ *                   example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+ *       401:
+ *         description: Invalid credentials
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       404:
+ *         description: User not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 router.post("/login", validate(loginSchema), login);
 
-// OTP-based passwordless authentication
+/**
+ * @swagger
+ * /api/auth/request-otp:
+ *   post:
+ *     summary: Request OTP for passwordless login
+ *     tags: [Authentication]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 example: "john@example.com"
+ *     responses:
+ *       200:
+ *         description: OTP sent successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                   example: "OTP sent to your email"
+ *       404:
+ *         description: User not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 router.post("/request-otp", validate(emailSchema), requestLoginOTP);
+
+/**
+ * @swagger
+ * /api/auth/verify-otp:
+ *   post:
+ *     summary: Verify OTP for passwordless login
+ *     tags: [Authentication]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *               - otp
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 example: "john@example.com"
+ *               otp:
+ *                 type: string
+ *                 example: "123456"
+ *     responses:
+ *       200:
+ *         description: OTP verified successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                   example: "Login successful"
+ *                 user:
+ *                   $ref: '#/components/schemas/User'
+ *                 token:
+ *                   type: string
+ *       400:
+ *         description: Invalid or expired OTP
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 router.post("/verify-otp", validate(otpVerificationSchema), verifyLoginOTP);
 
-// Google OAuth
+/**
+ * @swagger
+ * /api/auth/google/url:
+ *   get:
+ *     summary: Get Google OAuth authorization URL
+ *     tags: [Authentication]
+ *     responses:
+ *       200:
+ *         description: Google OAuth URL generated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 url:
+ *                   type: string
+ *                   example: "https://accounts.google.com/oauth/authorize?..."
+ */
 router.get("/google/url", getGoogleAuthUrl);
+
+/**
+ * @swagger
+ * /api/auth/google/login:
+ *   post:
+ *     summary: Login with Google OAuth
+ *     tags: [Authentication]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - credential
+ *             properties:
+ *               credential:
+ *                 type: string
+ *                 description: Google OAuth credential token
+ *                 example: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
+ *     responses:
+ *       200:
+ *         description: Google login successful
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                   example: "Google login successful"
+ *                 user:
+ *                   $ref: '#/components/schemas/User'
+ *                 token:
+ *                   type: string
+ *       400:
+ *         description: Invalid Google credential
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 router.post("/google/login", validate(googleLoginSchema), googleLogin);
 
 // Email verification
@@ -73,8 +333,59 @@ router.post("/verify-2fa", validate(twoFactorVerificationSchema), verify2FA);
 // PROTECTED ROUTES (Authentication Required)
 // ==========================================
 
-// User info and session management
+/**
+ * @swagger
+ * /api/auth/me:
+ *   get:
+ *     summary: Get current authenticated user information
+ *     tags: [Authentication]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Current user information
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 user:
+ *                   $ref: '#/components/schemas/User'
+ *       401:
+ *         description: Unauthorized - Invalid or missing token
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 router.get("/me", protect, getCurrentUser);
+
+/**
+ * @swagger
+ * /api/auth/logout:
+ *   post:
+ *     summary: Logout current user
+ *     tags: [Authentication]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Logout successful
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                   example: "Logout successful"
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
 router.post("/logout", protect, logout);
 
 // Two-Factor Authentication management
