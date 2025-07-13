@@ -2,6 +2,7 @@ import express from "express";
 import {
   register,
   login,
+  passwordLogin,
   requestLoginOTP,
   verifyLoginOTP,
   googleLogin,
@@ -16,12 +17,15 @@ import {
   enable2FA,
   verify2FA,
   getGoogleAuthUrl,
+  sendMagicLink,
+  verifyMagicLink,
 } from "../controllers/authController.js";
 import { protect } from "../middlewares/authMiddleware.js";
 import { validate } from "../utils/validation.js";
 import {
   registerSchema,
   loginSchema,
+  passwordLoginSchema,
   emailSchema,
   otpVerificationSchema,
   googleLoginSchema,
@@ -31,6 +35,8 @@ import {
   newPasswordSchema,
   twoFactorSetupSchema,
   twoFactorVerificationSchema,
+  magicLinkLoginSchema,
+  loginVerificationSchema,
 } from "../utils/validation.js";
 
 const router = express.Router();
@@ -112,7 +118,7 @@ router.post("/register", validate(registerSchema), register);
  * @swagger
  * /api/auth/login:
  *   post:
- *     summary: User login with email/username and password
+ *     summary: Passwordless login - initiate login process
  *     tags: [Authentication]
  *     requestBody:
  *       required: true
@@ -122,12 +128,68 @@ router.post("/register", validate(registerSchema), register);
  *             type: object
  *             required:
  *               - identifier
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 example: "john@example.com"
+ *               username:
+ *                 type: string
+ *                 example: "john_doe"
+ *     responses:
+ *       200:
+ *         description: Login code sent to email
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                   example: "Login code sent to your email"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     loginMethod:
+ *                       type: string
+ *                       example: "email"
+ *                     sentTo:
+ *                       type: string
+ *                       example: "john@example.com"
+ *                     expiresIn:
+ *                       type: string
+ *                       example: "10 minutes"
+ *       403:
+ *         description: Account deactivated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
+router.post("/login", validate(loginSchema), login);
+
+/**
+ * @swagger
+ * /api/auth/password-login:
+ *   post:
+ *     summary: Legacy password-based login
+ *     tags: [Authentication]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
  *               - password
  *             properties:
- *               identifier:
+ *               email:
  *                 type: string
- *                 description: Email address or username
+ *                 format: email
  *                 example: "john@example.com"
+ *               username:
+ *                 type: string
+ *                 example: "john_doe"
  *               password:
  *                 type: string
  *                 example: "password123"
@@ -142,25 +204,26 @@ router.post("/register", validate(registerSchema), register);
  *                 message:
  *                   type: string
  *                   example: "Login successful"
- *                 user:
- *                   $ref: '#/components/schemas/User'
- *                 token:
- *                   type: string
- *                   example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     user:
+ *                       $ref: '#/components/schemas/User'
+ *                     accessToken:
+ *                       type: string
+ *                     refreshToken:
+ *                       type: string
+ *                     loginMethod:
+ *                       type: string
+ *                       example: "password"
  *       401:
  *         description: Invalid credentials
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Error'
- *       404:
- *         description: User not found
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
  */
-router.post("/login", validate(loginSchema), login);
+router.post("/password-login", validate(passwordLoginSchema), passwordLogin);
 
 /**
  * @swagger

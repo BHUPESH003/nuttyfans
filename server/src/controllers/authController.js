@@ -1369,3 +1369,147 @@ export const getGoogleAuthUrl = async (req, res, next) => {
     next(error);
   }
 };
+
+// Magic link login (alternative to OTP)
+export const sendMagicLink = async (req, res, next) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      const error = new Error("Email is required");
+      error.statusCode = 400;
+      return next(error);
+    }
+
+    // Find user by email
+    const user = await prisma.user.findUnique({
+      where: { email },
+    });
+
+    if (!user) {
+      // Don't reveal if email exists
+      return res.status(200).json({
+        success: true,
+        message: "If this account exists, you will receive a magic link",
+      });
+    }
+
+    // Check if account is active
+    if (!user.isActive) {
+      const error = new Error("Your account has been deactivated");
+      error.statusCode = 403;
+      return next(error);
+    }
+
+    // Generate magic link token
+    const magicLinkToken = generateOTPToken(user);
+    const magicLinkExpires = new Date();
+    magicLinkExpires.setMinutes(magicLinkExpires.getMinutes() + 15); // 15 minutes
+
+    // Update user with magic link token (reusing otpToken field)
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        otpToken: magicLinkToken,
+        otpExpires: magicLinkExpires,
+        otpAttempts: 0,
+      },
+    });
+
+    // Send magic link email
+    try {
+      await emailService.sendMagicLinkEmail(
+        user.email,
+        user.fullName || user.username,
+        magicLinkToken
+      );
+    } catch (emailError) {
+      console.error("Failed to send magic link email:", emailError);
+      const error = new Error("Failed to send magic link");
+      error.statusCode = 500;
+      return next(error);
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Magic link sent to your email",
+      data: {
+        loginMethod: "magic_link",
+        sentTo: user.email,
+        expiresIn: "15 minutes",
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Verify magic link and login
+export const verifyMagicLink = async (req, res, next) => {
+  try {
+    const { token } = req.body;
+
+    if (!token) {
+      const error = new Error("Magic link token is required");
+      error.statusCode = 400;
+      return next(error);
+    }
+
+    // Verify the magic link token
+    const decoded = verifyOTPToken(token);
+
+    if (!decoded) {
+      const error = new Error("Invalid or expired magic link");
+      error.statusCode = 401;
+      return next(error);
+    }
+
+    // Find user with magic link token
+    const user = await prisma.user.findFirst({
+      where: {
+        email: decoded.email,
+        otpToken: token,
+        otpExpires: {
+          gt: new Date(),
+        },
+      },
+      include: {
+        profile: true,
+      },
+    });
+
+    if (!user) {
+      const error = new Error("Invalid or expired magic link");
+      error.statusCode = 401;
+      return next(error);
+    }
+
+    // Clear magic link token and update user
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        otpToken: null,
+        otpExpires: null,
+        otpAttempts: 0,
+        isEmailVerified: true, // Auto-verify email with magic link login
+        lastActiveAt: new Date(),
+        isOnline: true,
+      },
+    });
+
+    // Generate tokens
+    const tokens = generateTokens(user);
+
+    res.status(200).json({
+      success: true,
+      message: "Magic link login successful",
+      data: {
+        user: cleanUserData(user),
+        ...tokens,
+        loginMethod: "magic_link",
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
