@@ -984,6 +984,18 @@ export const logout = async (req, res, next) => {
       },
     });
 
+    // Get token from request headers for revocation
+    const authHeader = req.headers.authorization;
+    const token =
+      authHeader && authHeader.startsWith("Bearer ")
+        ? authHeader.split(" ")[1]
+        : null;
+
+    // Revoke the token (placeholder implementation)
+    if (token) {
+      revokeToken(token);
+    }
+
     res.status(200).json({
       success: true,
       message: "Logged out successfully",
