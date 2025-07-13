@@ -46,8 +46,20 @@ export const registerSchema = Joi.object({
   fullName: Joi.string().min(1).max(100).optional().allow(""),
 });
 
-// Login schema
+// Login schema - passwordless login request
 export const loginSchema = Joi.object({
+  email: Joi.string().email().optional().messages({
+    "string.email": "Please enter a valid email address",
+  }),
+  username: Joi.string().optional(),
+})
+  .xor("email", "username")
+  .messages({
+    "object.xor": "Please provide either email or username",
+  });
+
+// Legacy password login schema (for users who still want to use passwords)
+export const passwordLoginSchema = Joi.object({
   email: Joi.string().email().optional().messages({
     "string.email": "Please enter a valid email address",
   }),
@@ -159,6 +171,64 @@ export const twoFactorVerificationSchema = Joi.object({
   tempToken: Joi.string().required().messages({
     "any.required": "Temporary token is required",
   }),
+});
+
+// Login verification schema (for verifying login tokens)
+export const loginVerificationSchema = Joi.object({
+  token: Joi.string().required().messages({
+    "any.required": "Login token is required",
+  }),
+});
+
+// Magic link login schema
+export const magicLinkLoginSchema = Joi.object({
+  token: Joi.string().required().messages({
+    "any.required": "Magic link token is required",
+  }),
+});
+
+// Enhanced OTP verification schema with additional validation
+export const enhancedOTPVerificationSchema = Joi.object({
+  email: Joi.string().email().required().messages({
+    "string.email": "Please enter a valid email address",
+    "any.required": "Email is required",
+  }),
+  otp: Joi.string()
+    .length(6)
+    .pattern(/^[0-9]+$/)
+    .required()
+    .messages({
+      "string.length": "OTP must be exactly 6 digits",
+      "string.pattern.base": "OTP must contain only numbers",
+      "any.required": "OTP is required",
+    }),
+  rememberDevice: Joi.boolean().default(false),
+});
+
+// Account recovery schema
+export const accountRecoverySchema = Joi.object({
+  email: Joi.string().email().required().messages({
+    "string.email": "Please enter a valid email address",
+    "any.required": "Email is required",
+  }),
+  recoveryMethod: Joi.string()
+    .valid("email", "sms", "backup_codes")
+    .default("email")
+    .messages({
+      "any.only": "Invalid recovery method",
+    }),
+});
+
+// Device management schema
+export const deviceManagementSchema = Joi.object({
+  deviceName: Joi.string().max(100).required().messages({
+    "string.max": "Device name cannot exceed 100 characters",
+    "any.required": "Device name is required",
+  }),
+  deviceType: Joi.string()
+    .valid("desktop", "mobile", "tablet", "other")
+    .default("other"),
+  trustDevice: Joi.boolean().default(false),
 });
 
 // ==========================================
