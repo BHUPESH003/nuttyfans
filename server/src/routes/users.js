@@ -21,7 +21,12 @@ import {
   updatePassword,
   deleteAccount,
 } from "../controllers/userController.js";
-import { protect } from "../middlewares/authMiddleware.js";
+import {
+  protect,
+  requireVerifiedEmail,
+  requireSelfOrAdmin,
+  rateLimit,
+} from "../middlewares/authMiddleware.js";
 import { validate } from "../utils/validation.js";
 import {
   updateUserProfileSchema,
