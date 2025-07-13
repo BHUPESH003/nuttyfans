@@ -229,15 +229,22 @@ router.get("/category/:categoryId", getCreatorsByCategory);
 router.get("/:username", getCreatorProfile);
 
 // Protected routes
-router.post("/", protect, validate(creatorProfileSchema), becomeCreator);
+router.post(
+  "/",
+  protect,
+  requireVerifiedEmail,
+  validate(creatorProfileSchema),
+  becomeCreator
+);
 router.put(
   "/",
   protect,
-  creator,
+  requireCreator,
+  requireVerifiedEmail,
   validate(creatorProfileSchema),
   updateCreatorProfile
 );
 
-router.get("/stats", protect, creator, getCreatorStats);
+router.get("/stats", protect, requireCreator, getCreatorStats);
 
 export default router;
