@@ -193,8 +193,92 @@ export const register = async (req, res, next) => {
   }
 };
 
-// Login with email/password
+// Passwordless login - initiate login process
 export const login = async (req, res, next) => {
+  try {
+    const { email, username } = req.body;
+
+    if (!email && !username) {
+      const error = new Error("Email or username is required");
+      error.statusCode = 400;
+      return next(error);
+    }
+
+    // Find user by email or username
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [{ email: email || "" }, { username: username || "" }],
+      },
+      include: {
+        profile: true,
+      },
+    });
+
+    // Check if user exists
+    if (!user) {
+      // Don't reveal if email/username exists - return success regardless
+      return res.status(200).json({
+        success: true,
+        message: "If this account exists, you will receive a login link",
+        data: {
+          loginMethod: "email",
+          sentTo: email || "your registered email",
+        },
+      });
+    }
+
+    // Check if account is active
+    if (!user.isActive) {
+      const error = new Error("Your account has been deactivated");
+      error.statusCode = 403;
+      return next(error);
+    }
+
+    // Generate OTP
+    const otp = generateOTP();
+    const otpExpires = new Date();
+    otpExpires.setMinutes(otpExpires.getMinutes() + 10); // 10 minutes
+
+    // Update user with OTP
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        otpToken: otp,
+        otpExpires,
+        otpAttempts: 0,
+      },
+    });
+
+    // Send OTP email
+    try {
+      await emailService.sendLoginOTP(
+        user.email,
+        user.fullName || user.username,
+        otp
+      );
+    } catch (emailError) {
+      console.error("Failed to send OTP email:", emailError);
+      const error = new Error("Failed to send login code");
+      error.statusCode = 500;
+      return next(error);
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Login code sent to your email",
+      data: {
+        loginMethod: "email",
+        sentTo: user.email,
+        expiresIn: "10 minutes",
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Password-based login (legacy support)
+export const passwordLogin = async (req, res, next) => {
   try {
     const { email, username, password } = req.body;
 
@@ -224,7 +308,7 @@ export const login = async (req, res, next) => {
     // Check if user has password (not OAuth only)
     if (!user.password) {
       const error = new Error(
-        "Please use Google sign-in or request a login link"
+        "This account uses passwordless login. Please use the regular login option."
       );
       error.statusCode = 401;
       return next(error);
@@ -286,6 +370,7 @@ export const login = async (req, res, next) => {
       data: {
         user: cleanUserData(user),
         ...tokens,
+        loginMethod: "password",
       },
     });
   } catch (error) {
