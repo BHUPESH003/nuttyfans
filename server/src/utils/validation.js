@@ -4,7 +4,7 @@ import Joi from "joi";
 // AUTHENTICATION VALIDATION SCHEMAS
 // ==========================================
 
-// Registration schema
+// Registration schema - supports both passwordless and password-based registration
 export const registerSchema = Joi.object({
   username: Joi.string().alphanum().min(3).max(30).required().messages({
     "string.alphanum": "Username must contain only letters and numbers",
@@ -41,6 +41,47 @@ export const registerSchema = Joi.object({
       "any.required":
         "Password confirmation is required when password is provided",
     }),
+  firstName: Joi.string().min(1).max(50).optional().allow(""),
+  lastName: Joi.string().min(1).max(50).optional().allow(""),
+  fullName: Joi.string().min(1).max(100).optional().allow(""),
+  registrationMethod: Joi.string()
+    .valid("email", "google", "passwordless")
+    .default("passwordless")
+    .messages({
+      "any.only": "Invalid registration method",
+    }),
+});
+
+// Password-required registration schema (for specific flows that require passwords)
+export const passwordRequiredRegisterSchema = Joi.object({
+  username: Joi.string().alphanum().min(3).max(30).required().messages({
+    "string.alphanum": "Username must contain only letters and numbers",
+    "string.min": "Username must be at least 3 characters long",
+    "string.max": "Username cannot exceed 30 characters",
+    "any.required": "Username is required",
+  }),
+  email: Joi.string().email().required().messages({
+    "string.email": "Please enter a valid email address",
+    "any.required": "Email is required",
+  }),
+  password: Joi.string()
+    .min(8)
+    .required()
+    .pattern(
+      new RegExp(
+        "^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]{8,}$"
+      )
+    )
+    .messages({
+      "string.min": "Password must be at least 8 characters long",
+      "string.pattern.base":
+        "Password must contain at least one lowercase letter, one uppercase letter, one number, and one special character",
+      "any.required": "Password is required",
+    }),
+  confirmPassword: Joi.string().valid(Joi.ref("password")).required().messages({
+    "any.only": "Passwords do not match",
+    "any.required": "Password confirmation is required",
+  }),
   firstName: Joi.string().min(1).max(50).optional().allow(""),
   lastName: Joi.string().min(1).max(50).optional().allow(""),
   fullName: Joi.string().min(1).max(100).optional().allow(""),
