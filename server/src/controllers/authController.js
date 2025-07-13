@@ -74,7 +74,7 @@ const generateUniqueUsername = async (email, fullName) => {
   return username;
 };
 
-// Register with email/password
+// Register with optional password (passwordless by default)
 export const register = async (req, res, next) => {
   try {
     const {
@@ -85,6 +85,7 @@ export const register = async (req, res, next) => {
       firstName,
       lastName,
       fullName,
+      registrationMethod = "passwordless",
     } = req.body;
 
     // Validate required fields
@@ -144,10 +145,12 @@ export const register = async (req, res, next) => {
       hashedPassword = await bcrypt.hash(password, salt);
     }
 
-    // Generate email verification token
-    const emailVerificationToken = crypto.randomBytes(32).toString("hex");
-    const emailVerificationExpires = new Date();
-    emailVerificationExpires.setHours(emailVerificationExpires.getHours() + 24);
+    // Generate email verification token using JWT
+    const emailVerificationToken = generateEmailVerificationToken({
+      id: crypto.randomUUID(),
+      email,
+      username,
+    });
 
     // Create user
     const user = await prisma.user.create({
@@ -161,9 +164,13 @@ export const register = async (req, res, next) => {
           fullName || `${firstName || ""} ${lastName || ""}`.trim() || username,
         role: "USER",
         emailVerificationToken,
-        emailVerificationExpires,
+        emailVerificationExpires: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
         isEmailVerified: false,
         language: req.headers["accept-language"]?.split(",")[0] || "en",
+        registrationMethod,
+      },
+      include: {
+        profile: true,
       },
     });
 
@@ -190,13 +197,45 @@ export const register = async (req, res, next) => {
       },
     });
 
+    // For passwordless registration, also send a login link
+    if (registrationMethod === "passwordless") {
+      // Generate OTP for immediate login after verification
+      const otp = generateOTP();
+      const otpExpires = new Date();
+      otpExpires.setMinutes(otpExpires.getMinutes() + 30); // 30 minutes for registration
+
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          otpToken: otp,
+          otpExpires,
+          otpAttempts: 0,
+        },
+      });
+
+      // Send welcome email with login instructions
+      try {
+        await emailService.sendPasswordlessWelcomeEmail(
+          email,
+          user.fullName || username,
+          emailVerificationToken,
+          otp
+        );
+      } catch (emailError) {
+        console.error("Failed to send welcome email:", emailError);
+      }
+    }
+
     res.status(201).json({
       success: true,
       message:
-        "Registration successful! Please check your email to verify your account.",
+        registrationMethod === "passwordless"
+          ? "Registration successful! Please check your email to verify your account and get your login code."
+          : "Registration successful! Please check your email to verify your account.",
       data: {
         user: cleanUserData(user),
         requiresEmailVerification: true,
+        registrationMethod,
       },
     });
   } catch (error) {
