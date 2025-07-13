@@ -9,7 +9,12 @@ import {
   getPopularCreators,
   getVerifiedCreators,
 } from "../controllers/creatorController.js";
-import { protect, creator } from "../middlewares/authMiddleware.js";
+import {
+  protect,
+  requireCreator,
+  requireVerifiedEmail,
+  optionalAuth,
+} from "../middlewares/authMiddleware.js";
 import { validate } from "../utils/validation.js";
 import { creatorProfileSchema } from "../utils/validation.js";
 

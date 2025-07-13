@@ -194,6 +194,8 @@ router.get("/me/stats", protect, getProfileStats);
 router.put(
   "/password",
   protect,
+  requireVerifiedEmail,
+  rateLimit(5, 15 * 60 * 1000), // 5 attempts per 15 minutes
   validate(passwordUpdateSchema),
   updatePassword
 );
@@ -220,8 +222,8 @@ router.post(
 router.delete("/cover", protect, deleteCoverImage);
 
 // Social following system
-router.post("/:userId/follow", protect, followUser);
-router.delete("/:userId/follow", protect, unfollowUser);
+router.post("/:userId/follow", protect, requireVerifiedEmail, followUser);
+router.delete("/:userId/follow", protect, requireVerifiedEmail, unfollowUser);
 
 // User content and subscriptions
 router.get("/me/posts", protect, getMyPosts);
