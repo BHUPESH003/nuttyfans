@@ -4,7 +4,18 @@ import { OAuth2Client } from "google-auth-library";
 import speakeasy from "speakeasy";
 import QRCode from "qrcode";
 import prisma from "../config/prisma.js";
-import { generateTokens, verifyRefreshToken } from "../utils/jwtUtils.js";
+import {
+  generateTokens,
+  verifyRefreshToken,
+  generateOTPToken,
+  generateEmailVerificationToken,
+  generatePasswordResetToken,
+  generateTempToken,
+  verifyEmailVerificationToken,
+  verifyPasswordResetToken,
+  createTokenResponse,
+  cleanUserDataForToken,
+} from "../utils/jwtUtils.js";
 import emailService from "../services/emailService.js";
 import { config } from "../config/env.js";
 import {
