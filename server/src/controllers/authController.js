@@ -407,7 +407,7 @@ export const passwordLogin = async (req, res, next) => {
         success: true,
         message: "2FA required",
         requiresTwoFactor: true,
-        tempToken: generateTokens({ id: user.id, temp: true }).accessToken,
+        tempToken: generateTempToken(user),
       });
     }
 
