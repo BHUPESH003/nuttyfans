@@ -722,13 +722,26 @@ export const verifyEmail = async (req, res, next) => {
       return next(error);
     }
 
+    // Verify the email verification token
+    const decoded = verifyEmailVerificationToken(token);
+
+    if (!decoded) {
+      const error = new Error("Invalid or expired verification token");
+      error.statusCode = 400;
+      return next(error);
+    }
+
     // Find user with this verification token
     const user = await prisma.user.findFirst({
       where: {
+        email: decoded.email,
         emailVerificationToken: token,
         emailVerificationExpires: {
           gt: new Date(), // Token must not be expired
         },
+      },
+      include: {
+        profile: true,
       },
     });
 
@@ -745,6 +758,9 @@ export const verifyEmail = async (req, res, next) => {
         isEmailVerified: true,
         emailVerificationToken: null,
         emailVerificationExpires: null,
+      },
+      include: {
+        profile: true,
       },
     });
 
@@ -768,17 +784,32 @@ export const verifyEmail = async (req, res, next) => {
       console.error("Failed to send welcome email:", emailError);
     }
 
-    // Generate tokens now that email is verified
-    const tokens = generateTokens(updatedUser);
+    // For passwordless accounts, don't auto-login - they need to use the login flow
+    if (user.registrationMethod === "passwordless") {
+      res.status(200).json({
+        success: true,
+        message:
+          "Email verified successfully! You can now log in with your email.",
+        data: {
+          user: cleanUserData(updatedUser),
+          requiresLogin: true,
+          registrationMethod: user.registrationMethod,
+        },
+      });
+    } else {
+      // For password-based accounts, auto-login after verification
+      const tokens = generateTokens(updatedUser);
 
-    res.status(200).json({
-      success: true,
-      message: "Email verified successfully! Welcome to the platform.",
-      data: {
-        user: cleanUserData(updatedUser),
-        ...tokens,
-      },
-    });
+      res.status(200).json({
+        success: true,
+        message: "Email verified successfully! Welcome to the platform.",
+        data: {
+          user: cleanUserData(updatedUser),
+          ...tokens,
+          loginMethod: "email_verification",
+        },
+      });
+    }
   } catch (error) {
     next(error);
   }
