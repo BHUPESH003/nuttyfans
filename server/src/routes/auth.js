@@ -313,6 +313,111 @@ router.post("/verify-otp", validate(otpVerificationSchema), verifyLoginOTP);
 
 /**
  * @swagger
+ * /api/auth/magic-link:
+ *   post:
+ *     summary: Send magic link for passwordless login
+ *     tags: [Authentication]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 example: "john@example.com"
+ *     responses:
+ *       200:
+ *         description: Magic link sent successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                   example: "Magic link sent to your email"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     loginMethod:
+ *                       type: string
+ *                       example: "magic_link"
+ *                     sentTo:
+ *                       type: string
+ *                       example: "john@example.com"
+ *                     expiresIn:
+ *                       type: string
+ *                       example: "15 minutes"
+ *       403:
+ *         description: Account deactivated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
+router.post("/magic-link", validate(emailSchema), sendMagicLink);
+
+/**
+ * @swagger
+ * /api/auth/verify-magic-link:
+ *   post:
+ *     summary: Verify magic link and login
+ *     tags: [Authentication]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - token
+ *             properties:
+ *               token:
+ *                 type: string
+ *                 example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+ *     responses:
+ *       200:
+ *         description: Magic link login successful
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                   example: "Magic link login successful"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     user:
+ *                       $ref: '#/components/schemas/User'
+ *                     accessToken:
+ *                       type: string
+ *                     refreshToken:
+ *                       type: string
+ *                     loginMethod:
+ *                       type: string
+ *                       example: "magic_link"
+ *       401:
+ *         description: Invalid or expired magic link
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
+router.post(
+  "/verify-magic-link",
+  validate(magicLinkLoginSchema),
+  verifyMagicLink
+);
+
+/**
+ * @swagger
  * /api/auth/google/url:
  *   get:
  *     summary: Get Google OAuth authorization URL
