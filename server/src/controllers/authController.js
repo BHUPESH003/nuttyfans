@@ -845,8 +845,8 @@ export const resendVerificationEmail = async (req, res, next) => {
       return next(error);
     }
 
-    // Generate new verification token
-    const emailVerificationToken = crypto.randomBytes(32).toString("hex");
+    // Generate new verification token using JWT
+    const emailVerificationToken = generateEmailVerificationToken(user);
     const emailVerificationExpires = new Date();
     emailVerificationExpires.setHours(emailVerificationExpires.getHours() + 24);
 
@@ -1017,8 +1017,8 @@ export const forgotPassword = async (req, res, next) => {
       });
     }
 
-    // Generate reset token
-    const resetToken = crypto.randomBytes(32).toString("hex");
+    // Generate reset token using JWT
+    const resetToken = generatePasswordResetToken(user);
     const resetExpires = new Date();
     resetExpires.setHours(resetExpires.getHours() + 1); // 1 hour
 
@@ -1079,9 +1079,19 @@ export const resetPassword = async (req, res, next) => {
       return next(error);
     }
 
+    // Verify the password reset token
+    const decoded = verifyPasswordResetToken(token);
+
+    if (!decoded) {
+      const error = new Error("Invalid or expired reset token");
+      error.statusCode = 400;
+      return next(error);
+    }
+
     // Find user with reset token
     const user = await prisma.user.findFirst({
       where: {
+        email: decoded.email,
         passwordResetToken: token,
         passwordResetExpires: {
           gt: new Date(),
