@@ -15,6 +15,7 @@ import {
   verifyPasswordResetToken,
   createTokenResponse,
   cleanUserDataForToken,
+  revokeToken,
 } from "../utils/jwtUtils.js";
 import emailService from "../services/emailService.js";
 import { config } from "../config/env.js";
