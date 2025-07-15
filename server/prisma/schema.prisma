@@ -11,65 +11,37 @@ datasource db {
 }
 
 model User {
-  id        String  @id @default(uuid())
-  email     String  @unique
-  username  String  @unique
-  password  String? // Optional for OAuth users
-  fullName  String?
-  firstName String? // Added for better name handling
-  lastName  String? // Added for better name handling
-  bio       String?
+  id       String  @id @default(uuid())
+  email    String  @unique
+  username String  @unique
+  fullName String?
+  bio      String?
 
-  // Image fields - consistent naming
+  // Image fields
   avatarUrl     String? // Profile picture
   coverImageUrl String? // Cover/banner image
 
-  // Enhanced authentication fields
+  // Basic authentication fields
   role            UserRole  @default(USER)
   isEmailVerified Boolean   @default(false)
   isActive        Boolean   @default(true)
-  isOnline        Boolean   @default(false)
   lastActiveAt    DateTime?
 
   // Email verification
   emailVerificationToken   String?
   emailVerificationExpires DateTime?
 
-  // Password reset
-  passwordResetToken   String?
-  passwordResetExpires DateTime?
+  // Magic link authentication (passwordless)
+  magicLinkToken   String?
+  magicLinkExpires DateTime?
+  loginAttempts    Int       @default(0)
 
-  // OTP Authentication (Passwordless)
-  otpToken    String?
-  otpExpires  DateTime?
-  otpAttempts Int       @default(0)
-
-  // Google OAuth enhanced
-  googleId        String? @unique
-  googleEmail     String?
-  googleAvatarUrl String?
-
-  // Additional OAuth providers (future)
-  facebookId String? @unique
-  twitterId  String? @unique
-
-  // Profile enhancement
-  dateOfBirth DateTime?
-  gender      Gender?
-  location    String?
-  website     String?
-  timezone    String?
-  language    String    @default("en")
-
-  // Security
-  twoFactorEnabled Boolean  @default(false)
-  twoFactorSecret  String?
-  backupCodes      String[]
+  // Basic profile fields (can be added later in profile)
+  language String @default("en")
 
   // Privacy settings
   isPrivateProfile   Boolean @default(false)
   emailNotifications Boolean @default(true)
-  pushNotifications  Boolean @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -87,9 +59,6 @@ model User {
   notifications    Notification[]
   paymentMethods   PaymentMethod[]
 
-  // Square Payment Integration
-  squareCustomerId String?
-
   walletTransactions WalletTransaction[]
   Media              Media[]
   bookmarks          Bookmark[]
@@ -100,9 +69,7 @@ model User {
 
   @@index([email, username])
   @@index([emailVerificationToken])
-  @@index([passwordResetToken])
-  @@index([otpToken])
-  @@index([googleId])
+  @@index([magicLinkToken])
   @@index([isActive, isEmailVerified])
 }
 

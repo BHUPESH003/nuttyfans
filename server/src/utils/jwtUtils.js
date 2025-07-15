@@ -139,6 +139,28 @@ export const generatePasswordResetToken = (user) => {
 };
 
 /**
+ * Generate magic link token for passwordless authentication
+ * @param {object} user - User object from database
+ * @returns {string} - JWT magic link token
+ */
+export const generateMagicLinkToken = (user) => {
+  const payload = {
+    sub: user.id,
+    email: user.email,
+    type: "magic_link",
+    jti: generateTokenId(),
+    iat: Math.floor(Date.now() / 1000),
+    purpose: "magic_link_login",
+  };
+
+  return jwt.sign(payload, config.JWT_SECRET, {
+    expiresIn: "15m", // Magic link tokens expire in 15 minutes
+    issuer: "nuttyfans-api",
+    audience: "nuttyfans-client",
+  });
+};
+
+/**
  * Generate temporary token for 2FA verification
  * @param {object} user - User object from database
  * @returns {string} - JWT temporary token
@@ -260,6 +282,30 @@ export const verifyPasswordResetToken = (token) => {
     return decoded;
   } catch (error) {
     console.error("Password reset token verification failed:", error.message);
+    return null;
+  }
+};
+
+/**
+ * Verify magic link token specifically
+ * @param {string} token - Magic link token to verify
+ * @returns {object|null} - Decoded token payload or null if invalid
+ */
+export const verifyMagicLinkToken = (token) => {
+  try {
+    const decoded = jwt.verify(token, config.JWT_SECRET, {
+      issuer: "nuttyfans-api",
+      audience: "nuttyfans-client",
+    });
+
+    // Ensure it's actually a magic link token
+    if (decoded.type !== "magic_link") {
+      throw new Error("Invalid token type");
+    }
+
+    return decoded;
+  } catch (error) {
+    console.error("Magic link token verification failed:", error.message);
     return null;
   }
 };
