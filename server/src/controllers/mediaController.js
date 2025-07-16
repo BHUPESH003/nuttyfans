@@ -1,12 +1,12 @@
 import {
   generatePresignedUrl,
-  uploadToSpaces,
-  deleteFromSpaces,
+  uploadToS3,
+  deleteFromS3,
   getKeyFromUrl,
   getMediaTypeFromFilename,
   fileExists,
   updateFile,
-} from "../services/digitalOceanService.js";
+} from "../services/awsS3Service.js";
 import prisma from "../config/prisma.js";
 import fs from "fs";
 
@@ -176,7 +176,7 @@ export const uploadMedia = async (req, res, next) => {
 
     let uploadResult;
     try {
-      uploadResult = await uploadToSpaces(req.file.path, folder, {
+      uploadResult = await uploadToS3(req.file.path, folder, {
         quality,
         userId: req.user.id,
         generateThumbnail,
@@ -211,10 +211,10 @@ export const uploadMedia = async (req, res, next) => {
         data: media,
       });
     } catch (dbError) {
-      // If database operation fails, cleanup uploaded file from Digital Ocean
+      // If database operation fails, cleanup uploaded file from AWS S3
       if (uploadResult?.key) {
         try {
-          await deleteFromSpaces(uploadResult.key);
+          await deleteFromS3(uploadResult.key);
         } catch (deleteError) {
           console.warn(
             `Failed to cleanup uploaded file after DB error ${uploadResult.key}:`,
@@ -303,7 +303,7 @@ export const updateMedia = async (req, res, next) => {
       // If database operation fails, try to restore old file (but don't fail if it doesn't work)
       if (updateResult?.key && media.key !== updateResult.key) {
         try {
-          await deleteFromSpaces(updateResult.key);
+          await deleteFromS3(updateResult.key);
           console.warn(
             `Cleaned up new uploaded file ${updateResult.key} after database error`
           );
@@ -341,13 +341,13 @@ export const deleteMedia = async (req, res, next) => {
       return next(error);
     }
 
-    // Delete from Digital Ocean Spaces (but don't fail if deletion fails)
+    // Delete from AWS S3 (but don't fail if deletion fails)
     const deletePromises = [];
     if (media.key) {
       deletePromises.push(
-        deleteFromSpaces(media.key).catch((error) => {
+        deleteFromS3(media.key).catch((error) => {
           console.warn(
-            `Failed to delete media file ${media.key} from Digital Ocean Spaces:`,
+            `Failed to delete media file ${media.key} from AWS S3:`,
             error.message
           );
           // Don't throw error, just log warning as media should still be deleted from DB
@@ -358,7 +358,7 @@ export const deleteMedia = async (req, res, next) => {
       const thumbnailKey = media.key.replace(/^([^\/]+)\//, "$1/thumbnails/");
       if (thumbnailKey !== media.key) {
         deletePromises.push(
-          deleteFromSpaces(thumbnailKey).catch((error) => {
+          deleteFromS3(thumbnailKey).catch((error) => {
             console.warn(
               `Failed to delete thumbnail ${thumbnailKey}:`,
               error.message
@@ -493,7 +493,7 @@ export const cleanupOrphanedMedia = async (req, res, next) => {
     for (const media of orphanedMedia) {
       try {
         try {
-          await deleteFromSpaces(media.key);
+          await deleteFromS3(media.key);
         } catch (deleteError) {
           console.error(
             `Error deleting orphaned media from storage: ${deleteError.message}`

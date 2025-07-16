@@ -1,8 +1,8 @@
 import prisma from "../config/prisma.js";
 import {
-  uploadToSpaces,
+  uploadToS3,
   getMediaTypeFromFilename,
-} from "../services/digitalOceanService.js";
+} from "../services/awsS3Service.js";
 
 export const sendMessage = async (req, res, next) => {
   try {
@@ -36,7 +36,7 @@ export const sendMessage = async (req, res, next) => {
     if (mediaFile) {
       const quality = req.mediaQuality || "high";
 
-      const result = await uploadToSpaces(mediaFile.path, "messages", {
+      const result = await uploadToS3(mediaFile.path, "messages", {
         quality,
         userId: req.user.id,
       });

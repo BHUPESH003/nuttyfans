@@ -38,12 +38,12 @@ export const config = {
   SQUARE_LOCATION_ID: process.env.SQUARE_LOCATION_ID,
   SQUARE_ENVIRONMENT: process.env.SQUARE_ENVIRONMENT || "sandbox",
 
-  // DigitalOcean Spaces
-  DO_SPACES_ACCESS_KEY: process.env.DO_SPACES_ACCESS_KEY,
-  DO_SPACES_SECRET_KEY: process.env.DO_SPACES_SECRET_KEY,
-  DO_SPACES_BUCKET: process.env.DO_SPACES_BUCKET,
-  DO_SPACES_REGION: process.env.DO_SPACES_REGION,
-  DO_SPACES_ENDPOINT: process.env.DO_SPACES_ENDPOINT,
+  // AWS S3
+  AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID,
+  AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY,
+  AWS_S3_BUCKET: process.env.AWS_S3_BUCKET,
+  AWS_S3_REGION:
+    process.env.AWS_S3_REGION || process.env.AWS_REGION || "us-east-1",
 
   // File Upload
   MAX_FILE_SIZE: parseInt(process.env.MAX_FILE_SIZE) || 100 * 1024 * 1024, // 100MB
@@ -58,9 +58,9 @@ export const config = {
 const requiredEnvVars = [
   "DATABASE_URL",
   "JWT_SECRET",
-  "DO_SPACES_ACCESS_KEY",
-  "DO_SPACES_SECRET_KEY",
-  "DO_SPACES_BUCKET",
+  "AWS_ACCESS_KEY_ID",
+  "AWS_SECRET_ACCESS_KEY",
+  "AWS_S3_BUCKET",
 ];
 
 const missingEnvVars = requiredEnvVars.filter((envVar) => !process.env[envVar]);

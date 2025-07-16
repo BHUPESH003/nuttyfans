@@ -4,12 +4,12 @@ import path from "path";
 import { config } from "../config/env.js";
 import prisma from "../config/prisma.js";
 import {
-  uploadToSpaces,
-  deleteFromSpaces,
+  uploadToS3,
+  deleteFromS3,
   generatePresignedUrl,
   getKeyFromUrl,
   getMediaTypeFromFilename,
-} from "./digitalOceanService.js";
+} from "./awsS3Service.js";
 
 cloudinary.config({
   cloud_name: config.CLOUDINARY_CLOUD_NAME,
@@ -83,8 +83,8 @@ export const getPublicIdFromUrl = (url) => {
 
 export const uploadMedia = async (filePath, folder, userId, options = {}) => {
   try {
-    // Upload to DigitalOcean Spaces
-    const uploadResult = await uploadToSpaces(filePath, folder, {
+    // Upload to AWS S3
+    const uploadResult = await uploadToS3(filePath, folder, {
       quality: options.quality || "high",
       generateThumbnail: options.generateThumbnail || false,
     });
@@ -132,8 +132,8 @@ export const deleteMedia = async (mediaId, userId) => {
       throw new Error("Media not found or not authorized");
     }
 
-    // Delete from DigitalOcean Spaces
-    await deleteFromSpaces(media.key);
+    // Delete from AWS S3
+    await deleteFromS3(media.key);
 
     // Delete from database
     await prisma.media.delete({

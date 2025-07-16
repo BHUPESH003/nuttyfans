@@ -61,6 +61,44 @@ export const refreshTokenSchema = Joi.object({
 // USER MANAGEMENT VALIDATION SCHEMAS
 // ==========================================
 
+// Update user profile schema (comprehensive)
+export const updateUserProfileSchema = Joi.object({
+  fullName: Joi.string().min(1).max(100).optional().allow(""),
+  firstName: Joi.string().min(1).max(50).optional().allow(""),
+  lastName: Joi.string().min(1).max(50).optional().allow(""),
+  bio: Joi.string().max(500).optional().allow(""),
+  username: Joi.string().alphanum().min(3).max(30).optional(),
+  email: Joi.string().email().optional(),
+  currentPassword: Joi.string().min(8).optional(),
+  newPassword: Joi.string().min(8).optional(),
+  location: Joi.string().max(100).optional().allow(""),
+  website: Joi.string().uri().optional().allow(""),
+  dateOfBirth: Joi.date().optional().allow(null),
+  gender: Joi.string()
+    .valid("MALE", "FEMALE", "OTHER", "PREFER_NOT_TO_SAY")
+    .optional(),
+  isPrivateProfile: Joi.boolean().optional(),
+  emailNotifications: Joi.boolean().optional(),
+  pushNotifications: Joi.boolean().optional(),
+}).messages({
+  "string.email": "Please enter a valid email address",
+  "string.uri": "Please enter a valid website URL",
+  "string.alphanum": "Username must contain only letters and numbers",
+  "string.min": "Field must be at least {#limit} characters long",
+  "string.max": "Field cannot exceed {#limit} characters",
+});
+
+// Password update schema
+export const passwordUpdateSchema = Joi.object({
+  currentPassword: Joi.string().required().messages({
+    "any.required": "Current password is required",
+  }),
+  newPassword: Joi.string().min(8).required().messages({
+    "any.required": "New password is required",
+    "string.min": "New password must be at least 8 characters long",
+  }),
+});
+
 // Update profile schema
 export const updateProfileSchema = Joi.object({
   fullName: Joi.string().min(1).max(100).optional().allow(""),
@@ -122,6 +160,39 @@ export const createCreatorProfileSchema = Joi.object({
     }),
 });
 
+// Creator profile schema (for both create and update)
+export const creatorProfileSchema = Joi.object({
+  monthlyPrice: Joi.number().min(0.99).max(999.99).optional().messages({
+    "number.min": "Monthly price must be at least $0.99",
+    "number.max": "Monthly price cannot exceed $999.99",
+  }),
+  categories: Joi.array()
+    .items(Joi.string().uuid())
+    .min(1)
+    .optional()
+    .messages({
+      "array.min": "At least one category is required",
+    }),
+  socialLinks: Joi.object({
+    twitter: Joi.string().uri().optional().allow(""),
+    instagram: Joi.string().uri().optional().allow(""),
+    youtube: Joi.string().uri().optional().allow(""),
+    tiktok: Joi.string().uri().optional().allow(""),
+    onlyfans: Joi.string().uri().optional().allow(""),
+    website: Joi.string().uri().optional().allow(""),
+  }).optional(),
+  displayName: Joi.string().min(1).max(100).optional().allow(""),
+  tagline: Joi.string().max(200).optional().allow(""),
+  about: Joi.string().max(2000).optional().allow(""),
+  isAcceptingTips: Joi.boolean().optional(),
+  tipMinAmount: Joi.number().min(1).max(1000).optional(),
+  contentRating: Joi.string().valid("GENERAL", "MATURE", "EXPLICIT").optional(),
+}).messages({
+  "string.uri": "Please enter a valid URL",
+  "string.min": "Field must be at least {#limit} characters long",
+  "string.max": "Field cannot exceed {#limit} characters",
+});
+
 // ==========================================
 // MESSAGING VALIDATION SCHEMAS
 // ==========================================
@@ -138,6 +209,9 @@ export const sendMessageSchema = Joi.object({
   }),
   mediaUrl: Joi.string().uri().optional().allow(""),
 });
+
+// Alias for sendMessageSchema
+export const messageSchema = sendMessageSchema;
 
 // ==========================================
 // SEARCH VALIDATION SCHEMAS

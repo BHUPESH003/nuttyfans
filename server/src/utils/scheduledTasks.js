@@ -1,5 +1,5 @@
 import prisma from "../config/prisma.js";
-import { deleteFromSpaces } from "../services/digitalOceanService.js";
+import { deleteFromS3 } from "../services/awsS3Service.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -85,7 +85,7 @@ export const cleanupOrphanedMedia = async () => {
     for (const media of orphanedMedia) {
       try {
         try {
-          await deleteFromSpaces(media.key);
+          await deleteFromS3(media.key);
           console.log(`Deleted file from storage: ${media.key}`);
         } catch (deleteError) {
           console.error(

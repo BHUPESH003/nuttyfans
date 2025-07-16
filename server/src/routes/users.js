@@ -31,7 +31,6 @@ import { validate } from "../utils/validation.js";
 import {
   updateUserProfileSchema,
   passwordUpdateSchema,
-  followUserSchema,
 } from "../utils/validation.js";
 import {
   uploadSingle,

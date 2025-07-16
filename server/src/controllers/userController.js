@@ -1,11 +1,11 @@
 import bcrypt from "bcryptjs";
 import prisma from "../config/prisma.js";
 import {
-  uploadToSpaces,
+  uploadToS3,
   getKeyFromUrl,
-  deleteFromSpaces,
+  deleteFromS3,
   getMediaTypeFromFilename,
-} from "../services/digitalOceanService.js";
+} from "../services/awsS3Service.js";
 import fs from "fs";
 
 // Helper function to cleanup temp files
@@ -411,7 +411,7 @@ export const uploadAvatar = async (req, res, next) => {
     let uploadResult;
     try {
       // Upload new avatar
-      uploadResult = await uploadToSpaces(req.file.path, "avatars", {
+      uploadResult = await uploadToS3(req.file.path, "avatars", {
         userId: req.user.id,
         quality: "high",
       });
@@ -429,7 +429,7 @@ export const uploadAvatar = async (req, res, next) => {
       const oldKey = getKeyFromUrl(user.avatarUrl);
       if (oldKey) {
         try {
-          await deleteFromSpaces(oldKey);
+          await deleteFromS3(oldKey);
         } catch (deleteError) {
           console.warn(
             `Failed to delete old avatar ${oldKey}:`,
@@ -504,7 +504,7 @@ export const uploadCoverImage = async (req, res, next) => {
     let uploadResult;
     try {
       // Upload new cover image
-      uploadResult = await uploadToSpaces(req.file.path, "covers", {
+      uploadResult = await uploadToS3(req.file.path, "covers", {
         userId: req.user.id,
         quality: "high",
       });
@@ -518,7 +518,7 @@ export const uploadCoverImage = async (req, res, next) => {
       const oldKey = getKeyFromUrl(user.coverImageUrl);
       if (oldKey) {
         try {
-          await deleteFromSpaces(oldKey);
+          await deleteFromS3(oldKey);
         } catch (deleteError) {
           console.warn(
             `Failed to delete old cover image ${oldKey}:`,
@@ -576,7 +576,7 @@ export const deleteAvatar = async (req, res, next) => {
     const key = getKeyFromUrl(user.avatarUrl);
     if (key) {
       try {
-        await deleteFromSpaces(key);
+        await deleteFromS3(key);
       } catch (deleteError) {
         console.warn(`Failed to delete avatar ${key}:`, deleteError.message);
       }
@@ -616,7 +616,7 @@ export const deleteCoverImage = async (req, res, next) => {
     const key = getKeyFromUrl(user.coverImageUrl);
     if (key) {
       try {
-        await deleteFromSpaces(key);
+        await deleteFromS3(key);
       } catch (deleteError) {
         console.warn(
           `Failed to delete cover image ${key}:`,
