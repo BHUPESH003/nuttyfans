@@ -46,8 +46,6 @@ export const getUserProfile = async (req, res, next) => {
         id: true,
         username: true,
         fullName: true,
-        firstName: true,
-        lastName: true,
         bio: true,
         avatarUrl: true,
         coverImageUrl: true,
@@ -223,8 +221,6 @@ export const updateProfile = async (req, res, next) => {
   try {
     const {
       fullName,
-      firstName,
-      lastName,
       bio,
       username,
       email,
@@ -243,8 +239,6 @@ export const updateProfile = async (req, res, next) => {
 
     // Basic profile fields
     if (fullName !== undefined) updateData.fullName = fullName;
-    if (firstName !== undefined) updateData.firstName = firstName;
-    if (lastName !== undefined) updateData.lastName = lastName;
     if (bio !== undefined) updateData.bio = bio;
     if (location !== undefined) updateData.location = location;
     if (website !== undefined) updateData.website = website;
