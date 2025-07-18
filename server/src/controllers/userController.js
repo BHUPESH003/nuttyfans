@@ -49,11 +49,8 @@ export const getUserProfile = async (req, res, next) => {
         bio: true,
         avatarUrl: true,
         coverImageUrl: true,
-        isOnline: true,
         lastActiveAt: true,
         createdAt: true,
-        location: true,
-        website: true,
         isPrivateProfile: true,
         profile: {
           select: {
@@ -226,13 +223,8 @@ export const updateProfile = async (req, res, next) => {
       email,
       currentPassword,
       newPassword,
-      location,
-      website,
-      dateOfBirth,
-      gender,
       isPrivateProfile,
       emailNotifications,
-      pushNotifications,
     } = req.body;
 
     const updateData = {};
@@ -240,17 +232,10 @@ export const updateProfile = async (req, res, next) => {
     // Basic profile fields
     if (fullName !== undefined) updateData.fullName = fullName;
     if (bio !== undefined) updateData.bio = bio;
-    if (location !== undefined) updateData.location = location;
-    if (website !== undefined) updateData.website = website;
-    if (dateOfBirth !== undefined)
-      updateData.dateOfBirth = dateOfBirth ? new Date(dateOfBirth) : null;
-    if (gender !== undefined) updateData.gender = gender;
     if (isPrivateProfile !== undefined)
       updateData.isPrivateProfile = isPrivateProfile;
     if (emailNotifications !== undefined)
       updateData.emailNotifications = emailNotifications;
-    if (pushNotifications !== undefined)
-      updateData.pushNotifications = pushNotifications;
 
     // Check username availability
     if (username !== undefined && username !== req.user.username) {
